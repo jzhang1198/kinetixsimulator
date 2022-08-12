@@ -1,0 +1,11 @@
+name: kinetics_simulator
+channels:
+  - defaults
+dependencies:
+  - python=3.9.12
+  - numpy
+  - matplotlib
+  - seaborn
+  - pip:
+    - scipy==1.8.1
+prefix: /opt/anaconda3/envs/Metalprot_design
