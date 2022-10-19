@@ -8,6 +8,8 @@ This file contains classes for modelling the kinetics of chemical reaction netwo
 import re
 import numpy as np
 from scipy.integrate import odeint
+from scipy.stats import linregress
+from scipy.optimize import curve_fit
 from collections import OrderedDict
 
 class ChemicalReactionNetwork:
@@ -40,10 +42,11 @@ class ChemicalReactionNetwork:
         self.species = list(set([specie for specie in sum([i.split(' ') for i in {**mass_action_dict, **michaelis_menten_dict}.keys()], []) if specie not in characters and not specie.isnumeric()])) #parses through chemical equation strings to find all unique species
         self.mass_action_reactions = ChemicalReactionNetwork._parse_mass_action(ChemicalReactionNetwork._process_reaction_dict(mass_action_dict), self.species)
         self.michaelis_menten_reactions = ChemicalReactionNetwork._parse_michaelis_menten(michaelis_menten_dict, self.species)
-        self.time = time
+        self.time, self.timestep = time, time[1] - time[0]
         self.initial_concentrations = np.array([initial_concentrations[specie] if specie in initial_concentrations.keys() else 1e-50 for specie in self.species]) #generates initial values based on initial_concentrations
         self.update_dictionary = self._create_update_dictionary()
-        self.concentrations = None #create a placeholder for concentrations attribute
+        self.ODEs = self._define_ODEs()
+        self.concentrations = np.ndarray #create a placeholder for ODEs and concentrations attribute
 
     @staticmethod
     def _process_reaction_dict(reaction_dict: dict):
@@ -180,17 +183,7 @@ class ChemicalReactionNetwork:
             initial_concen_update[specie] = self._make_update_function(index, 'initial_concentration')
         return {**mass_action_update, **michaelis_menten_update, **initial_concen_update}
 
-    def integrate(self, rtol=None, atol=None):
-        """ 
-        Method for numerical integration of ODE system associated 
-        with the reaction network. Outputs nothing, but re-defines 
-        the concentrations attribute.
-
-        :param rtol, atol: hyperparameters that control the error tolerance
-        of the numerical integrator.
-        """
-
-        #to make code as fast as possible, functions for computing mass action and MM rates are pre-defined, then called in ODEs
+    def _define_ODEs(self):
         if type(self.mass_action_reactions.reactions) == list:
             def compute_mass_action_rates(concentrations):
                 return np.dot(self.mass_action_reactions.N.T, np.dot(self.mass_action_reactions.K, np.prod(np.power(concentrations, self.mass_action_reactions.A), axis=1)))
@@ -208,8 +201,65 @@ class ChemicalReactionNetwork:
 
         def ODEs(concentrations: np.ndarray, time: np.ndarray, michaelis_menten_reactions):
             return np.vstack((compute_michaelis_menten_rates(concentrations, michaelis_menten_reactions), compute_mass_action_rates(concentrations))).sum(axis=0)
+        return ODEs
 
-        self.concentrations = odeint(ODEs, self.initial_concentrations, self.time, args=(self.michaelis_menten_reactions,), rtol=rtol, atol=atol).T
+    def integrate(self, initial_concentrations: np.ndarray, time: np.ndarray, rtol=None, atol=None):
+        """ 
+        Method for numerical integration of ODE system associated 
+        with the reaction network. Outputs nothing, but re-defines 
+        the concentrations attribute.
+
+        :param rtol, atol: hyperparameters that control the error tolerance
+        of the numerical integrator.
+        """
+        self.concentrations = odeint(self.ODEs, initial_concentrations, time, args=(self.michaelis_menten_reactions,), rtol=rtol, atol=atol).T
+
+class CoupledEnzymeNetwork(ChemicalReactionNetwork):
+    def __init__(self, mass_action_dict: dict, michaelis_menten_dict: dict, initial_concentrations: dict, time: np.ndarray):
+        super().__init__(mass_action_dict, michaelis_menten_dict, initial_concentrations, time)
+        self.transient_time = self._compute_transient_time()
+        self.steady_state_time_indices = np.where(time > self.transient_time)[0]
+
+    def _compute_transient_time(self):
+        enzyme_concs = self.initial_concentrations[self.michaelis_menten_reactions.enzyme_indices[1:]]
+        kms, kcats = self.michaelis_menten_reactions.Kms[1:], self.michaelis_menten_reactions.kcats[1:]
+        return np.divide(kms, np.vstack([enzyme_concs, kcats]).prod(axis=0)).sum()
+
+    @staticmethod
+    def _mm_model(x, v_max, Km):
+        return v_max * x / (x + Km)
+
+    def _compute_equilibrium_product(self, initial_concentrations):
+        substrate_concentrations = initial_concentrations[self.michaelis_menten_reactions.substrate_indices]
+        return np.vstack([substrate_concentrations, self.michaelis_menten_reactions.substrate_stoichiometries]).prod(axis=0).sum()
+
+    def plot_apparent_MM_curve(self, ax, cutoff=0.5):
+
+        Km, kcat, enzyme = self.michaelis_menten_reactions.Kms[0], self.michaelis_menten_reactions.kcats[0], self.initial_concentrations[self.michaelis_menten_reactions.enzyme_indices[0]]
+        substrate_concs = np.linspace(Km / 10, Km * 10, 4)
+
+        times = np.linspace(0, self.transient_time * 2, 1000)
+        inds = np.where(times > self.transient_time)
+
+        observed_rates = []
+        initial_concentrations = self.initial_concentrations.copy()
+        for conc in substrate_concs:
+            initial_concentrations[self.michaelis_menten_reactions.substrate_indices[0]] = conc
+            equilibrium_product = self._compute_equilibrium_product(initial_concentrations)
+            self.integrate(initial_concentrations, times)
+
+            _SS_regime = self.concentrations[self.michaelis_menten_reactions.product_indices[-1],inds]
+            SS_regime = _SS_regime[_SS_regime < cutoff * equilibrium_product]
+            observed_rate = linregress(times[inds][0:len(SS_regime)], SS_regime).slope
+            observed_rates.append(observed_rate)
+
+        params, _ = curve_fit(CoupledEnzymeNetwork._mm_model, substrate_concs, observed_rates)
+        x = np.linspace(0, Km * 10)
+        ax[2].plot(x, CoupledEnzymeNetwork._mm_model(x, params[0], params[1]))
+        ax[2].plot(x, CoupledEnzymeNetwork._mm_model(x, kcat * enzyme, Km))
+
+    def plot_transient_time_trace():
+        pass
 
 class MassActionReactions:
     """ 

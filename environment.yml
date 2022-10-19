@@ -6,6 +6,8 @@ dependencies:
   - numpy
   - matplotlib
   - seaborn
+  - plotly=5.10.0
+  - ipywidgets=7.3.6
   - pip:
     - scipy==1.8.1
 prefix: /opt/anaconda3/envs/Metalprot_design
