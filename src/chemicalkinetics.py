@@ -11,6 +11,7 @@ from scipy.integrate import odeint
 from scipy.stats import linregress
 from scipy.optimize import curve_fit
 from collections import OrderedDict
+from utils import NoRxnError
 
 class ChemicalReactionNetwork:
     """
@@ -37,8 +38,12 @@ class ChemicalReactionNetwork:
         Array of concentrations of each specie at each timepoint.
     """
 
-    def __init__(self, mass_action_dict: dict, michaelis_menten_dict: dict, initial_concentrations: dict, time: np.ndarray):
+    def __init__(self, initial_concentrations: dict, mass_action_dict=dict, michaelis_menten_dict=dict, time=np.linspace(0,100,100), concentration_units='µM', time_units='s'):
         characters = {'*', '->', '+', '<->'}
+
+        if {type(mass_action_dict), type(michaelis_menten_dict)} == {type}:
+            raise NoRxnError
+
         self.species = list(set([specie for specie in sum([i.split(' ') for i in {**mass_action_dict, **michaelis_menten_dict}.keys()], []) if specie not in characters and not specie.isnumeric()])) #parses through chemical equation strings to find all unique species
         self.mass_action_reactions = ChemicalReactionNetwork._parse_mass_action(ChemicalReactionNetwork._process_reaction_dict(mass_action_dict), self.species)
         self.michaelis_menten_reactions = ChemicalReactionNetwork._parse_michaelis_menten(michaelis_menten_dict, self.species)
@@ -47,6 +52,7 @@ class ChemicalReactionNetwork:
         self.update_dictionary = self._create_update_dictionary()
         self.ODEs = self._define_ODEs()
         self.concentrations = np.ndarray #create a placeholder for ODEs and concentrations attribute
+        self.concentration_units, self.time_units = concentration_units, time_units
 
     @staticmethod
     def _process_reaction_dict(reaction_dict: dict):
@@ -215,10 +221,15 @@ class ChemicalReactionNetwork:
         self.concentrations = odeint(self.ODEs, initial_concentrations, time, args=(self.michaelis_menten_reactions,), rtol=rtol, atol=atol).T
 
 class CoupledEnzymeNetwork(ChemicalReactionNetwork):
-    def __init__(self, mass_action_dict: dict, michaelis_menten_dict: dict, initial_concentrations: dict, time: np.ndarray):
-        super().__init__(mass_action_dict, michaelis_menten_dict, initial_concentrations, time)
+    def __init__(self, initial_concentrations: dict, mass_action_dict=dict, michaelis_menten_dict=dict, time=np.linspace(0,100,100), concentration_units='µM', time_units='s'):
+        super().__init__(initial_concentrations, mass_action_dict, michaelis_menten_dict, time, concentration_units, time_units)
         self.transient_time = self._compute_transient_time()
-        self.steady_state_time_indices = np.where(time > self.transient_time)[0]
+        self.ground_truth_params, self.fit_params = (self.michaelis_menten_reactions.kcats[0], self.michaelis_menten_reactions.Kms[0]), tuple
+        self.concentration_range = np.linspace(0, self.ground_truth_params[1] * 10, 100)
+        self.d1, self.d2, self.d3 = np.ndarray, np.ndarray, np.ndarray
+        self.progress_curves = np.ndarray
+        self.timecourse = np.ndarray
+        self.substrate_concentrations = np.ndarray
 
     def _compute_transient_time(self):
         enzyme_concs = self.initial_concentrations[self.michaelis_menten_reactions.enzyme_indices[1:]]
@@ -229,37 +240,66 @@ class CoupledEnzymeNetwork(ChemicalReactionNetwork):
     def _mm_model(x, v_max, Km):
         return v_max * x / (x + Km)
 
-    def _compute_equilibrium_product(self, initial_concentrations):
-        substrate_concentrations = initial_concentrations[self.michaelis_menten_reactions.substrate_indices]
-        return np.vstack([substrate_concentrations, self.michaelis_menten_reactions.substrate_stoichiometries]).prod(axis=0).sum()
+    @staticmethod
+    def _quadratic_mm_model(x, E, kcat, Km):
+        term1 = x + E + Km 
+        term2 = np.sqrt(np.square(term1) - (4 * x * E))
+        return (kcat / 2) * (term1 - term2)
 
-    def plot_apparent_MM_curve(self, ax, cutoff=0.5):
+    def _estimate_completion_time(self, initial_concentrations: np.ndarray):
+        S, E = initial_concentrations[self.michaelis_menten_reactions.substrate_indices[0]], initial_concentrations[self.michaelis_menten_reactions.enzyme_indices[0]]
+        Km, kcat = self.michaelis_menten_reactions.Kms[0], self.michaelis_menten_reactions.kcats[0]
+        S_stoichio = self.michaelis_menten_reactions.substrate_stoichiometries[0]
+        velocity = CoupledEnzymeNetwork._quadratic_mm_model(S, E, kcat, Km) * S_stoichio
+        t_stop = S / velocity
+        t_stop = t_stop if t_stop > self.transient_time * 5 else self.transient_time * 5
+        return t_stop
 
-        Km, kcat, enzyme = self.michaelis_menten_reactions.Kms[0], self.michaelis_menten_reactions.kcats[0], self.initial_concentrations[self.michaelis_menten_reactions.enzyme_indices[0]]
-        substrate_concs = np.linspace(Km / 10, Km * 10, 4)
+    @staticmethod
+    def _linear_fit(x, y):
+        out = linregress(x, y)
+        return out.slope, out.rvalue
 
-        times = np.linspace(0, self.transient_time * 2, 1000)
-        inds = np.where(times > self.transient_time)
-
-        observed_rates = []
+    def simulate_mm_model_fit(self, compute_deriv=False, progress_curves=False):
+        S = np.array([self.michaelis_menten_reactions.Kms[0], self.michaelis_menten_reactions.Kms[0] * 2, self.michaelis_menten_reactions.Kms[0] * 10])
+        self.substrate_concentrations = S
+        initial_rates, curves, d1, d2, d3 = [], [], [], [], []
         initial_concentrations = self.initial_concentrations.copy()
-        for conc in substrate_concs:
-            initial_concentrations[self.michaelis_menten_reactions.substrate_indices[0]] = conc
-            equilibrium_product = self._compute_equilibrium_product(initial_concentrations)
-            self.integrate(initial_concentrations, times)
 
-            _SS_regime = self.concentrations[self.michaelis_menten_reactions.product_indices[-1],inds]
-            SS_regime = _SS_regime[_SS_regime < cutoff * equilibrium_product]
-            observed_rate = linregress(times[inds][0:len(SS_regime)], SS_regime).slope
-            observed_rates.append(observed_rate)
+        initial_concentrations[self.michaelis_menten_reactions.substrate_indices[0]] = S[-1]
+        t_stop = self._estimate_completion_time(initial_concentrations)
+        timepoints = round(t_stop) if t_stop < 1000 else 1000
+        timecourse = np.linspace(0, t_stop, timepoints)
+        self.timecourse = timecourse
+        for s in S:
+            initial_concentrations[self.michaelis_menten_reactions.substrate_indices[0]] = s
+            self.integrate(initial_concentrations, timecourse)
+            P = self.concentrations[self.michaelis_menten_reactions.product_indices[-1]]
 
-        params, _ = curve_fit(CoupledEnzymeNetwork._mm_model, substrate_concs, observed_rates)
-        x = np.linspace(0, Km * 10)
-        ax[2].plot(x, CoupledEnzymeNetwork._mm_model(x, params[0], params[1]))
-        ax[2].plot(x, CoupledEnzymeNetwork._mm_model(x, kcat * enzyme, Km))
+            linear_regime = np.where(P < 0.3 * s)
+            slope, _ = CoupledEnzymeNetwork._linear_fit(timecourse[linear_regime], P[linear_regime])
+            initial_rates.append(slope)
 
-    def plot_transient_time_trace():
-        pass
+            if compute_deriv:
+                dt = timepoints[1] - timepoints[0]
+                _d1 = np.gradient(P, dt)
+                _d2 = np.gradient(_d1, dt)
+                _d3 = np.gradient(_d2, dt)
+                d1.append(_d1), d2.append(_d2), d3.append(_d3)
+
+            if progress_curves:
+                curves.append(P)
+
+        params, _ = curve_fit(CoupledEnzymeNetwork._mm_model, S, initial_rates)
+        Vmax, Km = params
+        params = (Vmax / initial_concentrations[self.michaelis_menten_reactions.enzyme_indices[0]], Km)
+        self.fit_params = params
+
+        if compute_deriv:
+            self.d1, self.d2, self.d3 = np.vstack(d1).T, np.vstack(d2).T, np.vstack(d3).T
+
+        if progress_curves:
+            self.progress_curves = np.vstack(curves).T
 
 class MassActionReactions:
     """ 
