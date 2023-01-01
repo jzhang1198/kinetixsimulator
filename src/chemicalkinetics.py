@@ -286,6 +286,16 @@ class MichaelisMentenReactions:
     """
 
     def __init__(self, reactions=None, substrates=None, enzymes=None, products=None, Kms=None, kcats=None):
+        """
+        Given the Km and kcat of a simple enzymatic reaction that obeys
+        Michaelis Menten kinetics, there are infinetly many combinations
+        of kon and koff that could explain the observed SS kinetics. 
+        Therefore, one can accurately model steady state Michaelis
+        Menten kinetics by choosing an appropriate combination of kon 
+        and koff. This is what will be done here.
+        """
+
+
         args = [reactions, substrates, enzymes, products, Kms, kcats]
         types = [type(arg) for arg in args]
 
@@ -294,7 +304,7 @@ class MichaelisMentenReactions:
             self.reactions, self.substrate_indices, self.substrate_stoichiometries, self.product_indices, self.product_stoichiometries, \
             self.enzyme_indices, self.Km_names, self.Kms, self.kcat_names, self.kcats = [None] * 10
 
-        #otherwise, instantiate a bonafide object
+        #otherwise, instantiate an object
         elif set(types) == set([list]):
             self.reactions = reactions
             self.substrate_indices, self.substrate_stoichiometries = map(np.array,zip(*substrates))
@@ -325,84 +335,3 @@ class MichaelisMentenReactions:
         substrate_velocities[self.substrate_indices] = np.vstack((_velocities, self.substrate_stoichiometries)).prod(axis=0) * -1
         product_velocities[self.product_indices] = np.vstack((_velocities, self.product_stoichiometries)).prod(axis=0)
         return np.vstack((substrate_velocities, product_velocities)).sum(axis=0)
-
-# class CoupledEnzymeNetwork(ChemicalReactionNetwork):
-#     def __init__(self, initial_concentrations: dict, mass_action_dict=dict, michaelis_menten_dict=dict, time=np.linspace(0,100,100), concentration_units='µM', time_units='s'):
-#         super().__init__(initial_concentrations, mass_action_dict, michaelis_menten_dict, time, concentration_units, time_units)
-#         self.transient_time = self._compute_transient_time()
-#         self.ground_truth_params, self.fit_params = (self.michaelis_menten_reactions.kcats[0], self.michaelis_menten_reactions.Kms[0]), tuple
-#         self.concentration_range = np.linspace(0, self.ground_truth_params[1] * 10, 100)
-#         self.d1, self.d2, self.d3 = np.ndarray, np.ndarray, np.ndarray
-#         self.progress_curves = np.ndarray
-#         self.timecourse = np.ndarray
-#         self.substrate_concentrations = np.ndarray
-
-#     def _compute_transient_time(self):
-#         enzyme_concs = self.initial_concentrations[self.michaelis_menten_reactions.enzyme_indices[1:]]
-#         kms, kcats = self.michaelis_menten_reactions.Kms[1:], self.michaelis_menten_reactions.kcats[1:]
-#         return np.divide(kms, np.vstack([enzyme_concs, kcats]).prod(axis=0)).sum()
-
-#     @staticmethod
-#     def _mm_model(x, v_max, Km):
-#         return v_max * x / (x + Km)
-
-#     @staticmethod
-#     def _quadratic_mm_model(x, E, kcat, Km):
-#         term1 = x + E + Km 
-#         term2 = np.sqrt(np.square(term1) - (4 * x * E))
-#         return (kcat / 2) * (term1 - term2)
-
-#     def _estimate_completion_time(self, initial_concentrations: np.ndarray):
-#         S, E = initial_concentrations[self.michaelis_menten_reactions.substrate_indices[0]], initial_concentrations[self.michaelis_menten_reactions.enzyme_indices[0]]
-#         Km, kcat = self.michaelis_menten_reactions.Kms[0], self.michaelis_menten_reactions.kcats[0]
-#         S_stoichio = self.michaelis_menten_reactions.substrate_stoichiometries[0]
-#         velocity = CoupledEnzymeNetwork._quadratic_mm_model(S, E, kcat, Km) * S_stoichio
-#         t_stop = S / velocity
-#         t_stop = t_stop if t_stop > self.transient_time * 5 else self.transient_time * 5
-#         return t_stop
-
-#     @staticmethod
-#     def _linear_fit(x, y):
-#         out = linregress(x, y)
-#         return out.slope, out.rvalue
-
-#     def simulate_mm_model_fit(self, compute_deriv=False, progress_curves=False):
-#         S = np.array([self.michaelis_menten_reactions.Kms[0], self.michaelis_menten_reactions.Kms[0] * 2, self.michaelis_menten_reactions.Kms[0] * 10])
-#         self.substrate_concentrations = S
-#         initial_rates, curves, d1, d2, d3 = [], [], [], [], []
-#         initial_concentrations = self.initial_concentrations.copy()
-
-#         initial_concentrations[self.michaelis_menten_reactions.substrate_indices[0]] = S[-1]
-#         t_stop = self._estimate_completion_time(initial_concentrations)
-#         timepoints = round(t_stop) if t_stop < 1000 else 1000
-#         timecourse = np.linspace(0, t_stop, timepoints)
-#         self.timecourse = timecourse
-#         for s in S:
-#             initial_concentrations[self.michaelis_menten_reactions.substrate_indices[0]] = s
-#             self.integrate(initial_concentrations, timecourse)
-#             P = self.concentrations[self.michaelis_menten_reactions.product_indices[-1]]
-
-#             linear_regime = np.where(P < 0.3 * s)
-#             slope, _ = CoupledEnzymeNetwork._linear_fit(timecourse[linear_regime], P[linear_regime])
-#             initial_rates.append(slope)
-
-#             if compute_deriv:
-#                 dt = timepoints[1] - timepoints[0]
-#                 _d1 = np.gradient(P, dt)
-#                 _d2 = np.gradient(_d1, dt)
-#                 _d3 = np.gradient(_d2, dt)
-#                 d1.append(_d1), d2.append(_d2), d3.append(_d3)
-
-#             if progress_curves:
-#                 curves.append(P)
-
-#         params, _ = curve_fit(CoupledEnzymeNetwork._mm_model, S, initial_rates)
-#         Vmax, Km = params
-#         params = (Vmax / initial_concentrations[self.michaelis_menten_reactions.enzyme_indices[0]], Km)
-#         self.fit_params = params
-
-#         if compute_deriv:
-#             self.d1, self.d2, self.d3 = np.vstack(d1).T, np.vstack(d2).T, np.vstack(d3).T
-
-#         if progress_curves:
-#             self.progress_curves = np.vstack(curves).T
