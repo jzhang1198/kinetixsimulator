@@ -6,6 +6,7 @@ This file contains classes for modelling the kinetics of chemical reaction netwo
 
 #imports
 import re
+from . import utils
 import numpy as np
 from scipy.integrate import odeint
 from scipy.optimize import minimize
