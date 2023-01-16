@@ -11,9 +11,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from ipywidgets import VBox, HBox, widgets
 
-import sys
-sys.path.insert(0, '/Users/jonathanzhang/Documents/ucsf/kortemme-pinney/repositories/kinetics_simulator/')
-from kinetics_simulator.utils import SliderNameNotFoundWarning
+from .utils import SliderNameNotFoundWarning
 
 class ProgressCurveGUI:
     def __init__(self, chemical_reaction_network, figsize=(8,8), title='Mass Action Kinetics', fontsize=12, multithread=False, tol=None, sliders=[]):
