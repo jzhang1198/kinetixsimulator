@@ -6,10 +6,9 @@ This file contains classes for modelling the kinetics of chemical reaction netwo
 
 #imports
 import re
-from . import utils
 import numpy as np
 from scipy.integrate import odeint
-from scipy.optimize import minimize
+from scipy.optimize import minimize, curve_fit
 
 class ChemicalReactionNetwork:
     """
@@ -249,43 +248,139 @@ class ChemicalReactionNetwork:
                 return 1
         return indices
 
-    def _generate_ground_truth_data(self, fitting_concentrations: np.array, variable: str, observable: str):
+    def _simulate_ground_truth_data(self, fitting_concentrations: np.array, variable: str, observable: str):
         ground_truth_data = []
         for fitting_concen in fitting_concentrations:
             self.update_dictionary[variable](fitting_concen)
             ground_truth_data.append(self.integrate(self.initial_concentrations, self.time, inplace=False)[self.species.index(observable)])
         return np.vstack(ground_truth_data)
 
-    def fit(self, variable: str, observable: str, params: list, fitting_concentrations: np.array):
+    @staticmethod
+    def _generate_lookup(fitting_concentrations: np.ndarray):
+        lookup = {}
+        for concen in set(fitting_concentrations):
+            lookup[concen] = np.argwhere(fitting_concentrations == concen).flatten()
+        return lookup
+
+    def fit(self, variable: str, observable: str, params: list, fitting_concentrations: np.ndarray, ground_truth_data=np.ndarray, conversion_factor=1, constraints=None):
+        """
+        Method for fitting a kinetic model to input or simulated data.
+        """
+
         param_indices = self._get_fitting_params(params)
         if type(param_indices) == int:
             print('Fitting not supported for Michaelis Menten parameters in this version. This functionality will be included in a later version!')
             return
 
-        ground_truth_data = self._generate_ground_truth_data(fitting_concentrations, variable, observable)
+        ground_truth_data = self._simulate_ground_truth_data(fitting_concentrations, variable, observable) if type(ground_truth_data) == type \
+                            else conversion_factor * ground_truth_data        
 
-        def objective(K, object):
+        lookup = ChemicalReactionNetwork._generate_lookup(fitting_concentrations)
+
+        def objective(x, object):
             observable_index = object.species.index(observable)
-            observable_concentrations = []
-            
+
             # update attributes for parameter attributes
-            for param_value, param_name in zip(K, params):
+            for param_value, param_name in zip(x[0:-2], params):
                 object.update_dictionary[param_name](param_value)
 
+            # # update initial concentrations of variable species and integrate
+            # observable_concentrations = []
+            # for concentration in fitting_concentrations:
+            #     object.update_dictionary[variable](concentration)
+            #     observable_concentrations.append(object.integrate(object.initial_concentrations, object.time, inplace=False)[observable_index])
+            # observable_concentrations = np.vstack(observable_concentrations)
+
+            observable_concentrations = np.zeros((len(fitting_concentrations), len(object.time)))
             # update initial concentrations of variable species and integrate
-            for concentration in fitting_concentrations:
+
+            for concentration in set(fitting_concentrations):
                 object.update_dictionary[variable](concentration)
-                observable_concentrations.append(object.integrate(object.initial_concentrations, object.time, inplace=False)[observable_index])
+                # observable_concentrations[lookup[concentration]] = object.integrate(object.initial_concentrations, object.time, inplace=False)[observable_index]
+                observable_concentrations[lookup[concentration]] = x[-2] * object.integrate(object.initial_concentrations, object.time, inplace=False)[observable_index] + x[-1]
+
 
             # compute sum square error
-            observable_concentrations = np.vstack(observable_concentrations)
             sse = np.square(observable_concentrations - ground_truth_data).mean()
             return sse
 
-        K0 = np.ones(len(params))
-        bounds = [(0, None) for i in range(len(params))]
+        K0 = np.ones(len(params) + 2)
+        bounds = [(0, None) for i in range(len(params))] + [(None, None), (None, None)]
         result = minimize(objective, K0, args=(self), bounds=bounds)
+        # result = objective(np.array([10000, (344 * 10000) / 2, 2]), self)
         return result
+
+class BindingReaction(ChemicalReactionNetwork):
+    """
+    Child class with methods specific for modelling thermodynamics and kinetics of bimolecular binding reactions.
+    """
+    def __init__(self, initial_concentrations: dict, reaction_dict: dict, limiting_species: str, ligand: str, equilibtration_time: int, concentration_units='µM', time_units='s', ligand_concentrations=np.insert(np.logspace(-3,2,10), 0, 0)):
+        self.equilibration_time = equilibtration_time
+        time = np.linspace(0, self.equilibration_time, self.equilibration_time)
+        super().__init__(initial_concentrations, reaction_dict, time=time, concentration_units=concentration_units, time_units=time_units)
+        self.limiting_species, self.ligand = limiting_species, ligand
+        self.limiting_species_index, self.ligand_index = self.species.index(limiting_species), self.species.index(ligand)
+        self.complex_index = list({1,2,3} - {self.limiting_species_index, self.ligand_index})[0]
+
+        self.ligand_concentrations = ligand_concentrations
+
+
+        self.Kd_fit = float
+        self.progress_curves = np.ndarray
+        self.binding_isotherm = np.ndarray
+        self.ground_truth_binding_isotherm = np.ndarray
+        self._get_ground_truth_binding_isotherm()
+
+        self._make_equilibration_time_update()
+
+    def _make_equilibration_time_update(self):
+
+        def update(new_value):
+            self.equilibration_time = new_value
+            self.time = np.linspace(0, self.equilibration_time, self.equilibration_time)
+
+        self.update_dictionary['equilibration_time'] = update
+    
+    def _get_ground_truth_binding_isotherm(self):
+        P = self.initial_concentrations[self.limiting_species_index]
+        L = self.ligand_concentrations
+        Kd = self.mass_action_reactions.K[1,1] / self.mass_action_reactions.K[0,0]
+
+        term1 = np.full(len(L), P + Kd) + L
+        term2 = np.square(term1) - np.vstack([np.full(len(L), 4 * P), L]).prod(axis=0)
+        self.ground_truth_binding_isotherm = (term1 - np.sqrt(term2)) / (2 * P)    
+
+    def get_progress_curves_and_isotherm(self, inplace=True):
+        progress_curves, binding_isotherm = [], []
+        for concen in self.ligand_concentrations:
+            self.update_dictionary[self.ligand](concen)
+
+            _progress_curves = self.integrate(self.initial_concentrations, self.time, inplace=False)
+            progress_curves.append(_progress_curves[self.complex_index])
+            binding_isotherm.append(_progress_curves[self.complex_index, -1] / (_progress_curves[self.complex_index, -1] + _progress_curves[self.limiting_species_index, -1]))
+
+        progress_curves = np.vstack(progress_curves)
+        binding_isotherm = np.array(binding_isotherm)
+
+        if inplace:
+            self.progress_curves = progress_curves
+            self.binding_isotherm = binding_isotherm
+        else:
+            return progress_curves, binding_isotherm
+
+    def fit_Kd(self):
+
+        x = self.ligand_concentrations
+        y = self.binding_isotherm
+
+        P = self.initial_concentrations[self.limiting_species_index]
+        def model(L, Kd):
+            term1 = np.full(len(L), P + Kd) + L
+            term2 = np.square(term1) - np.vstack([np.full(len(L), 4 * P), L]).prod(axis=0)
+            return (term1 - np.sqrt(term2)) / (2 * P)    
+
+        _, params = curve_fit(model, x, y)
+        self.Kd_fit = params[0]
 
 class MassActionReactions:
     """ 
