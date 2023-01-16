@@ -18,3 +18,9 @@ class MalformedRxnError(Error):
     def __init__(self, message):
         message
 
+class SliderNameNotFoundWarning(Warning):
+    def __init__(self, slider_name: str):
+        self.msg = f'{slider_name} not a valid specie of rate constant. No slider will be displayed.'
+    
+    def __str__(self):
+        return repr(self.msg)
