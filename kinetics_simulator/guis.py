@@ -211,6 +211,27 @@ class BindingIsothermGUI(ProgressCurveGUI):
 class Slider:
     """
     Utility class for storing slider attributes.
+
+    Attributes
+    ----------
+    name: str
+        The name of the rate constant or specie for the slider.
+    min: float
+        Minimum value for slider. If logscale, corresponds to 
+        the minimum exponent.
+    max: float
+        Maximum value for slider. If logscale, corresponds to 
+        the maximum exponent.
+    stepsize: float
+        Slider stepsize.
+    scale: str  
+        Can take on 'log' or 'linear'. 
+    base: float
+        If the scale is 'log', defines base of exponential.
+    continuous_update: bool
+        Determines if plots are continuously updated as slider
+        is moved. Should be set to False if dealing with complex
+        kinetic mechanisms.
     """
     def __init__(self, name: str, min=0, max=100, stepsize=1, scale='log', base=10, continuous_update=True):
         self.name, self.min, self.max, self.stepsize, self.scale, self.base, self.continuous_update = name, min, max, stepsize, scale, base, continuous_update
