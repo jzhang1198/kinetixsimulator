@@ -8,7 +8,7 @@ This file contains classes for modelling the kinetics of chemical reaction netwo
 import re
 import numpy as np
 from scipy.integrate import odeint
-from collections import OrderedDict
+from scipy.optimize import minimize, curve_fit
 
 class ChemicalReactionNetwork:
     """
@@ -35,35 +35,55 @@ class ChemicalReactionNetwork:
         Array of concentrations of each specie at each timepoint.
     """
 
-    def __init__(self, mass_action_dict: dict, michaelis_menten_dict: dict, initial_concentrations: dict, time: np.ndarray):
+    def __init__(self, initial_concentrations: dict, reaction_dict: dict, time=np.linspace(0,100,100), concentration_units='µM', time_units='s'):
         characters = {'*', '->', '+', '<->'}
-        self.species = list(set([specie for specie in sum([i.split(' ') for i in {**mass_action_dict, **michaelis_menten_dict}.keys()], []) if specie not in characters and not specie.isnumeric()])) #parses through chemical equation strings to find all unique species
-        self.mass_action_reactions = ChemicalReactionNetwork._parse_mass_action(ChemicalReactionNetwork._process_reaction_dict(mass_action_dict), self.species)
-        self.michaelis_menten_reactions = ChemicalReactionNetwork._parse_michaelis_menten(michaelis_menten_dict, self.species)
-        self.time = time
+
+        if len(reaction_dict) < 1:
+            print('no reaction')
+
+        self.species = list(set([specie for specie in sum([i.split(' ') for i in reaction_dict.keys()], []) if specie not in characters and not specie.isnumeric()])) #parses through chemical equation strings to find all unique species
+        self._reaction_dict = ChemicalReactionNetwork._process_reaction_dict(reaction_dict)
+        self.mass_action_reactions, self.michaelis_menten_reactions = ChemicalReactionNetwork._parse_reaction_dict(self._reaction_dict, self.species)
+        self.time, self.timestep = time, time[1] - time[0]
         self.initial_concentrations = np.array([initial_concentrations[specie] if specie in initial_concentrations.keys() else 1e-50 for specie in self.species]) #generates initial values based on initial_concentrations
         self.update_dictionary = self._create_update_dictionary()
-        self.concentrations = None #create a placeholder for concentrations attribute
+        self.ODEs = self._define_ODEs()
+        self.concentrations = np.ndarray #create a placeholder for ODEs and concentrations attribute
+        self.concentration_units, self.time_units = concentration_units, time_units
 
     @staticmethod
     def _process_reaction_dict(reaction_dict: dict):
         """
         Splits reversible reactions into elementary reactions.
         """
-
         updated_reaction_dict = {}
         for reaction in reaction_dict.keys():
+
+            if 'fit' not in reaction_dict[reaction].keys():
+                reaction_dict[reaction]['fit'] = False
+
+            difference = {'model', 'rate-constants', 'rate-constant-names'}.difference(set(reaction_dict[reaction].keys()))
+            if len(difference) != 0:
+                message = '{reaction} missing the following keys: {keys}'
+                raise utils.MalformedRxnError(message.format(reaction=reaction, keys=', '.join(list(difference))))
+
             if '<->' in reaction:
-                forward_constant, reverse_constant = reaction_dict[reaction].keys()
+                forward_constant, reverse_constant = reaction_dict[reaction]['rate-constant-names']
                 split = reaction.split(' ')
                 split[split.index('<->')] = '->'
                 _forward, _reverse = split, split
                 forward, reverse = ' '.join(_forward), ' '.join(_reverse[::-1])
-                updated_reaction_dict[forward] = OrderedDict({forward_constant: reaction_dict[reaction][forward_constant]})
-                updated_reaction_dict[reverse] = OrderedDict({reverse_constant: reaction_dict[reaction][reverse_constant]})
+                updated_reaction_dict[forward] = {'rate-constants': reaction_dict[reaction]['rate-constants'][0], 'model': reaction_dict[reaction]['model'], 'rate-constant-names': reaction_dict[reaction]['rate-constant-names'][0]}
+                updated_reaction_dict[reverse] = {'rate-constants': reaction_dict[reaction]['rate-constants'][1], 'model': reaction_dict[reaction]['model'], 'rate-constant-names': reaction_dict[reaction]['rate-constant-names'][1]}
             else:
                 updated_reaction_dict[reaction] = reaction_dict[reaction]
         return updated_reaction_dict
+
+    @staticmethod
+    def _parse_reaction_dict(reaction_dict: dict, species: list):
+        mass_action_dict = dict([(key, value) for key, value in zip(reaction_dict.keys(), reaction_dict.values()) if reaction_dict[key]['model'] == 'mass-action'])
+        michaelis_menten_dict = dict([(key, value) for key, value in zip(reaction_dict.keys(), reaction_dict.values()) if reaction_dict[key]['model'] == 'michaelis-menten'])
+        return ChemicalReactionNetwork._parse_mass_action(mass_action_dict, species), ChemicalReactionNetwork._parse_michaelis_menten(michaelis_menten_dict, species)
 
     @staticmethod
     def _parse_mass_action(mass_action_dict: dict, species: list):
@@ -79,8 +99,7 @@ class ChemicalReactionNetwork:
         A, N, rate_names, rates = [], [], [], []
         reactions = list(mass_action_dict.keys())
         for reaction in reactions:
-            rate_name, rate = list(mass_action_dict[reaction].items())[0]
-            rate_names.append(rate_name), rates.append(rate)
+            rate_names.append(mass_action_dict[reaction]['rate-constant-names']), rates.append(mass_action_dict[reaction]['rate-constants'])
             b, a = np.zeros(len(species)), np.zeros(len(species))
 
             #split chemical equation into products and substrates
@@ -114,9 +133,9 @@ class ChemicalReactionNetwork:
             return MichaelisMentenReactions()
         
         substrates, enzymes, products, Kms, kcats = [], [], [], [], []
-        reactions, rates = michaelis_menten_dict.keys(), michaelis_menten_dict.values()
-        for reaction, rate in zip(reactions, rates):
-            Km_key, kcat_key = [key for key in rate.keys() if 'Km' in key][0], [key for key in rate.keys() if 'kcat' in key][0]
+        reactions, values = michaelis_menten_dict.keys(), michaelis_menten_dict.values()
+        for reaction, value in zip(reactions, values):
+            Km_key, kcat_key = value['rate-constant-names']
 
             #split reaction equation into substrates and products
             _left, _right = reaction.split('->')
@@ -142,8 +161,8 @@ class ChemicalReactionNetwork:
             substrates.append((substrate_index, substrate_stoichiometry))
             products.append((product_index, product_stoichiometry))
             enzymes.append(enzyme_index)
-            Kms.append((Km_key, rate[Km_key]))
-            kcats.append((kcat_key, rate[kcat_key]))
+            Kms.append((Km_key, value['rate-constants'][0]))
+            kcats.append((kcat_key, value['rate-constants'][1]))
         return MichaelisMentenReactions(list(reactions), substrates, enzymes, products, Kms, kcats)
 
     def _make_update_function(self, index: int, token: str):
@@ -180,17 +199,7 @@ class ChemicalReactionNetwork:
             initial_concen_update[specie] = self._make_update_function(index, 'initial_concentration')
         return {**mass_action_update, **michaelis_menten_update, **initial_concen_update}
 
-    def integrate(self, rtol=None, atol=None):
-        """ 
-        Method for numerical integration of ODE system associated 
-        with the reaction network. Outputs nothing, but re-defines 
-        the concentrations attribute.
-
-        :param rtol, atol: hyperparameters that control the error tolerance
-        of the numerical integrator.
-        """
-
-        #to make code as fast as possible, functions for computing mass action and MM rates are pre-defined, then called in ODEs
+    def _define_ODEs(self):
         if type(self.mass_action_reactions.reactions) == list:
             def compute_mass_action_rates(concentrations):
                 return np.dot(self.mass_action_reactions.N.T, np.dot(self.mass_action_reactions.K, np.prod(np.power(concentrations, self.mass_action_reactions.A), axis=1)))
@@ -208,8 +217,170 @@ class ChemicalReactionNetwork:
 
         def ODEs(concentrations: np.ndarray, time: np.ndarray, michaelis_menten_reactions):
             return np.vstack((compute_michaelis_menten_rates(concentrations, michaelis_menten_reactions), compute_mass_action_rates(concentrations))).sum(axis=0)
+        return ODEs
 
-        self.concentrations = odeint(ODEs, self.initial_concentrations, self.time, args=(self.michaelis_menten_reactions,), rtol=rtol, atol=atol).T
+    def integrate(self, initial_concentrations: np.ndarray, time: np.ndarray, rtol=None, atol=None, inplace=True):
+        """ 
+        Method for numerical integration of ODE system associated 
+        with the reaction network. Outputs nothing, but re-defines 
+        the concentrations attribute.
+
+        :param rtol, atol: hyperparameters that control the error tolerance
+        of the numerical integrator.
+        """
+        if inplace:
+            self.concentrations = odeint(self.ODEs, initial_concentrations, time, args=(self.michaelis_menten_reactions,), rtol=rtol, atol=atol).T
+        else:
+            return odeint(self.ODEs, initial_concentrations, time, args=(self.michaelis_menten_reactions,), rtol=rtol, atol=atol).T
+
+    def _get_fitting_params(self, params: list):
+        indices = np.array([])
+        for param in params:
+            mass_action_rates = np.array(self.mass_action_reactions.rate_names)
+            Km_names = np.array(self.michaelis_menten_reactions.Km_names)
+            kcat_names = np.array(self.michaelis_menten_reactions.kcat_names)
+
+            mass_action_indices = np.argwhere(mass_action_rates == param).flatten()
+            Km_indices = np.argwhere(Km_names == param).flatten()
+            kcat_indices = np.argwhere(kcat_names == param).flatten()
+            indices = np.hstack([indices, mass_action_indices, Km_indices, kcat_indices])
+            if len(Km_indices) > 0 or len(kcat_indices) > 0:
+                return 1
+        return indices
+
+    def _simulate_ground_truth_data(self, fitting_concentrations: np.array, variable: str, observable: str):
+        ground_truth_data = []
+        for fitting_concen in fitting_concentrations:
+            self.update_dictionary[variable](fitting_concen)
+            ground_truth_data.append(self.integrate(self.initial_concentrations, self.time, inplace=False)[self.species.index(observable)])
+        return np.vstack(ground_truth_data)
+
+    @staticmethod
+    def _generate_lookup(fitting_concentrations: np.ndarray):
+        lookup = {}
+        for concen in set(fitting_concentrations):
+            lookup[concen] = np.argwhere(fitting_concentrations == concen).flatten()
+        return lookup
+
+    def fit(self, variable: str, observable: str, params: list, fitting_concentrations: np.ndarray, ground_truth_data=np.ndarray, conversion_factor=1, constraints=None):
+        """
+        Method for fitting a kinetic model to input or simulated data.
+        """
+
+        param_indices = self._get_fitting_params(params)
+        if type(param_indices) == int:
+            print('Fitting not supported for Michaelis Menten parameters in this version. This functionality will be included in a later version!')
+            return
+
+        ground_truth_data = self._simulate_ground_truth_data(fitting_concentrations, variable, observable) if type(ground_truth_data) == type \
+                            else conversion_factor * ground_truth_data        
+
+        lookup = ChemicalReactionNetwork._generate_lookup(fitting_concentrations)
+
+        def objective(x, object):
+            observable_index = object.species.index(observable)
+
+            # update attributes for parameter attributes
+            for param_value, param_name in zip(x[0:-2], params):
+                object.update_dictionary[param_name](param_value)
+
+            # # update initial concentrations of variable species and integrate
+            # observable_concentrations = []
+            # for concentration in fitting_concentrations:
+            #     object.update_dictionary[variable](concentration)
+            #     observable_concentrations.append(object.integrate(object.initial_concentrations, object.time, inplace=False)[observable_index])
+            # observable_concentrations = np.vstack(observable_concentrations)
+
+            observable_concentrations = np.zeros((len(fitting_concentrations), len(object.time)))
+            # update initial concentrations of variable species and integrate
+
+            for concentration in set(fitting_concentrations):
+                object.update_dictionary[variable](concentration)
+                # observable_concentrations[lookup[concentration]] = object.integrate(object.initial_concentrations, object.time, inplace=False)[observable_index]
+                observable_concentrations[lookup[concentration]] = x[-2] * object.integrate(object.initial_concentrations, object.time, inplace=False)[observable_index] + x[-1]
+
+
+            # compute sum square error
+            sse = np.square(observable_concentrations - ground_truth_data).mean()
+            return sse
+
+        K0 = np.ones(len(params) + 2)
+        bounds = [(0, None) for i in range(len(params))] + [(None, None), (None, None)]
+        result = minimize(objective, K0, args=(self), bounds=bounds)
+        # result = objective(np.array([10000, (344 * 10000) / 2, 2]), self)
+        return result
+
+class BindingReaction(ChemicalReactionNetwork):
+    """
+    Child class with methods specific for modelling thermodynamics and kinetics of bimolecular binding reactions.
+    """
+    def __init__(self, initial_concentrations: dict, reaction_dict: dict, limiting_species: str, ligand: str, equilibtration_time: int, concentration_units='µM', time_units='s', ligand_concentrations=np.insert(np.logspace(-3,2,10), 0, 0)):
+        self.equilibration_time = equilibtration_time
+        time = np.linspace(0, self.equilibration_time, self.equilibration_time)
+        super().__init__(initial_concentrations, reaction_dict, time=time, concentration_units=concentration_units, time_units=time_units)
+        self.limiting_species, self.ligand = limiting_species, ligand
+        self.limiting_species_index, self.ligand_index = self.species.index(limiting_species), self.species.index(ligand)
+        self.complex_index = list({1,2,3} - {self.limiting_species_index, self.ligand_index})[0]
+
+        self.ligand_concentrations = ligand_concentrations
+
+
+        self.Kd_fit = float
+        self.progress_curves = np.ndarray
+        self.binding_isotherm = np.ndarray
+        self.ground_truth_binding_isotherm = np.ndarray
+        self._get_ground_truth_binding_isotherm()
+
+        self._make_equilibration_time_update()
+
+    def _make_equilibration_time_update(self):
+
+        def update(new_value):
+            self.equilibration_time = new_value
+            self.time = np.linspace(0, self.equilibration_time, self.equilibration_time)
+
+        self.update_dictionary['equilibration_time'] = update
+    
+    def _get_ground_truth_binding_isotherm(self):
+        P = self.initial_concentrations[self.limiting_species_index]
+        L = self.ligand_concentrations
+        Kd = self.mass_action_reactions.K[1,1] / self.mass_action_reactions.K[0,0]
+
+        term1 = np.full(len(L), P + Kd) + L
+        term2 = np.square(term1) - np.vstack([np.full(len(L), 4 * P), L]).prod(axis=0)
+        self.ground_truth_binding_isotherm = (term1 - np.sqrt(term2)) / (2 * P)    
+
+    def get_progress_curves_and_isotherm(self, inplace=True):
+        progress_curves, binding_isotherm = [], []
+        for concen in self.ligand_concentrations:
+            self.update_dictionary[self.ligand](concen)
+
+            _progress_curves = self.integrate(self.initial_concentrations, self.time, inplace=False)
+            progress_curves.append(_progress_curves[self.complex_index])
+            binding_isotherm.append(_progress_curves[self.complex_index, -1] / (_progress_curves[self.complex_index, -1] + _progress_curves[self.limiting_species_index, -1]))
+
+        progress_curves = np.vstack(progress_curves)
+        binding_isotherm = np.array(binding_isotherm)
+
+        if inplace:
+            self.progress_curves = progress_curves
+            self.binding_isotherm = binding_isotherm
+        else:
+            return progress_curves, binding_isotherm
+
+    def fit_Kd(self):
+
+        x = self.ligand_concentrations
+        y = self.binding_isotherm
+
+        P = self.initial_concentrations[self.limiting_species_index]
+        def model(L, Kd):
+            term1 = np.full(len(L), P + Kd) + L
+            term2 = np.square(term1) - np.vstack([np.full(len(L), 4 * P), L]).prod(axis=0)
+            return (term1 - np.sqrt(term2)) / (2 * P)    
+
+        _, params = curve_fit(model, x, y)
+        self.Kd_fit = params[0]
 
 class MassActionReactions:
     """ 
@@ -227,6 +398,8 @@ class MassActionReactions:
         A list of rate names for each rate constant.
     K: np.ndarray
         The rate matrix for the mass action reactions.
+    fit: np.ndarray
+        Array designating whether a reaction is to be fit.
     """
 
     def __init__(self, reactions=None, A=None, N=None, rate_names=None, rates=None):
@@ -244,6 +417,7 @@ class MassActionReactions:
             self.A = np.vstack(A)
             self.rate_names = rate_names
             self.K = np.diag(np.array(rates))
+            # self.NK = np.dot(self.N.T, self.K)
 
         else:
             #set up handling of exceptions
