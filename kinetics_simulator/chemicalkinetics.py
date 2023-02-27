@@ -8,7 +8,7 @@ This file contains classes for modelling the kinetics of chemical reaction netwo
 import re
 import numpy as np
 from scipy.integrate import odeint
-from scipy.optimize import minimize, curve_fit
+from scipy.optimize import curve_fit
 
 class ChemicalReactionNetwork:
     """
@@ -233,83 +233,6 @@ class ChemicalReactionNetwork:
         else:
             return odeint(self.ODEs, initial_concentrations, time, args=(self.michaelis_menten_reactions,), rtol=rtol, atol=atol).T
 
-    def _get_fitting_params(self, params: list):
-        indices = np.array([])
-        for param in params:
-            mass_action_rates = np.array(self.mass_action_reactions.rate_names)
-            Km_names = np.array(self.michaelis_menten_reactions.Km_names)
-            kcat_names = np.array(self.michaelis_menten_reactions.kcat_names)
-
-            mass_action_indices = np.argwhere(mass_action_rates == param).flatten()
-            Km_indices = np.argwhere(Km_names == param).flatten()
-            kcat_indices = np.argwhere(kcat_names == param).flatten()
-            indices = np.hstack([indices, mass_action_indices, Km_indices, kcat_indices])
-            if len(Km_indices) > 0 or len(kcat_indices) > 0:
-                return 1
-        return indices
-
-    def _simulate_ground_truth_data(self, fitting_concentrations: np.array, variable: str, observable: str):
-        ground_truth_data = []
-        for fitting_concen in fitting_concentrations:
-            self.update_dictionary[variable](fitting_concen)
-            ground_truth_data.append(self.integrate(self.initial_concentrations, self.time, inplace=False)[self.species.index(observable)])
-        return np.vstack(ground_truth_data)
-
-    @staticmethod
-    def _generate_lookup(fitting_concentrations: np.ndarray):
-        lookup = {}
-        for concen in set(fitting_concentrations):
-            lookup[concen] = np.argwhere(fitting_concentrations == concen).flatten()
-        return lookup
-
-    def fit(self, variable: str, observable: str, params: list, fitting_concentrations: np.ndarray, ground_truth_data=np.ndarray, conversion_factor=1, constraints=None):
-        """
-        Method for fitting a kinetic model to input or simulated data.
-        """
-
-        param_indices = self._get_fitting_params(params)
-        if type(param_indices) == int:
-            print('Fitting not supported for Michaelis Menten parameters in this version. This functionality will be included in a later version!')
-            return
-
-        ground_truth_data = self._simulate_ground_truth_data(fitting_concentrations, variable, observable) if type(ground_truth_data) == type \
-                            else conversion_factor * ground_truth_data        
-
-        lookup = ChemicalReactionNetwork._generate_lookup(fitting_concentrations)
-
-        def objective(x, object):
-            observable_index = object.species.index(observable)
-
-            # update attributes for parameter attributes
-            for param_value, param_name in zip(x[0:-2], params):
-                object.update_dictionary[param_name](param_value)
-
-            # # update initial concentrations of variable species and integrate
-            # observable_concentrations = []
-            # for concentration in fitting_concentrations:
-            #     object.update_dictionary[variable](concentration)
-            #     observable_concentrations.append(object.integrate(object.initial_concentrations, object.time, inplace=False)[observable_index])
-            # observable_concentrations = np.vstack(observable_concentrations)
-
-            observable_concentrations = np.zeros((len(fitting_concentrations), len(object.time)))
-            # update initial concentrations of variable species and integrate
-
-            for concentration in set(fitting_concentrations):
-                object.update_dictionary[variable](concentration)
-                # observable_concentrations[lookup[concentration]] = object.integrate(object.initial_concentrations, object.time, inplace=False)[observable_index]
-                observable_concentrations[lookup[concentration]] = x[-2] * object.integrate(object.initial_concentrations, object.time, inplace=False)[observable_index] + x[-1]
-
-
-            # compute sum square error
-            sse = np.square(observable_concentrations - ground_truth_data).mean()
-            return sse
-
-        K0 = np.ones(len(params) + 2)
-        bounds = [(0, None) for i in range(len(params))] + [(None, None), (None, None)]
-        result = minimize(objective, K0, args=(self), bounds=bounds)
-        # result = objective(np.array([10000, (344 * 10000) / 2, 2]), self)
-        return result
-
 class BindingReaction(ChemicalReactionNetwork):
     """
     Child class with methods specific for modelling thermodynamics and kinetics of bimolecular binding reactions.
@@ -320,7 +243,7 @@ class BindingReaction(ChemicalReactionNetwork):
         super().__init__(initial_concentrations, reaction_dict, time=time, concentration_units=concentration_units, time_units=time_units)
         self.limiting_species, self.ligand = limiting_species, ligand
         self.limiting_species_index, self.ligand_index = self.species.index(limiting_species), self.species.index(ligand)
-        self.complex_index = list({1,2,3} - {self.limiting_species_index, self.ligand_index})[0]
+        self.complex_index = list({0,1,2} - {self.limiting_species_index, self.ligand_index})[0]
 
         self.ligand_concentrations = ligand_concentrations
 
