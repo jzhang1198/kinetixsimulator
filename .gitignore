@@ -86,3 +86,4 @@ _data/
 data/
 databases/
 .DS_Store
+.pytest_cache/
