@@ -31,3 +31,5 @@ When writing these dictionaries, ensure you abide by the following conventions:
 ## Known Issues
 
 The simulation algorithm may produce un-physical solutions for systems with very fast kinetics. Be careful when assigning large values to rate constants. I am actively working on implementing changes to enable better handling of these systems.
+
+I've also noticed that, in rare cases, the plot itself will not render. I believe this is an issue with ipywidgets, but I'm not entirely sure what the exact issue is. Usually, a combination of kernel restarts and re-running cells will resolve the issue.
