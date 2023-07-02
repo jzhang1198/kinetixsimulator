@@ -3,13 +3,13 @@ channels:
   - defaults
 dependencies:
   - python=3.9.12
-  - numpy
-  - matplotlib
-  - seaborn
-  - pip
+  - numpy=1.24.4
+  - matplotlib=3.7.1
+  - seaborn=0.12.2
+  - pip=23.1.2
   - pip:
     - scipy==1.8.1
     - plotly==5.11.0
-    - ipywidgets
-    - pytest
+    - ipywidgets=8.0.6
+    - pytest=7.4.0
 prefix: /opt/anaconda3/envs/kinetics-simulator
