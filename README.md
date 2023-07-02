@@ -27,3 +27,7 @@ When writing these dictionaries, ensure you abide by the following conventions:
 4) Initial substrate concentrations left undefined will automatically be set to zero.
 5) If you have no Michaelis Menten or mass action reactions, it is ok to leave their respective dictionaries empty.
 6) The <code>plot_kwargs</code> dictionary is completely optional. If you would like more control over the appearance of your plot, feel free to add key-value pairs as appropriate.
+
+## Known Issues
+
+The simulation algorithm may produce un-physical solutions for systems with very fast kinetics. Be careful when assigning large values to rate constants. I am actively working on implementing changes to enable better handling of these systems.
