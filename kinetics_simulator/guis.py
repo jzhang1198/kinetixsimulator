@@ -9,7 +9,7 @@ import warnings
 import threading
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from ipywidgets import VBox, HBox, widgets
+from ipywidgets import VBox, widgets
 
 from .utils import SliderNameNotFoundWarning
 
@@ -207,6 +207,58 @@ class BindingIsothermGUI(ProgressCurveGUI):
     
     def interactive(self):
         return super().interactive()
+
+class FitPlotGUI:
+    def __init__(self, fitter, figsize=(8,8), title='Mass Action Kinetics', fontsize=12):
+        self.fitter = fitter
+        self.figsize, self.title, self.fontsize = figsize, title, fontsize
+        self.residual_fig, self.base_title = self._initialize_residual_figure()
+        self.slider = self._initialize_slider()
+
+    def _initialize_residual_figure(self):
+        subs = make_subplots(cols=2, subplot_titles=['Fits', 'Residuals'])
+        fig = go.FigureWidget(subs)
+
+        base_title = f'Progress Curves ([{self.fitter.observable_specie}]=' + '{:.2e}' + f'{self.fitter.model.concentration_units})\n' + \
+                    ' '.join([param_name + ':' + f'{param:.2e}' for param_name, param in zip(self.fitter.fitting_params, self.fitter.fit_param_values)])
+
+        fig.add_scatter(name='Ground Truth', x=self.fitter.model.time, y=self.fitter.ground_truth_data[0], row=1, col=1, mode='markers')
+        fig.add_scatter(name='Fit', x=self.fitter.model.time, y=self.fitter.fits[0], row=1, col=1)
+        fig.add_scatter(name='Residuals', x=self.fitter.model.time, y=self.fitter.residuals[0], row=1, col=2, mode='markers')
+
+        fig.layout.title = base_title.format(self.fitter.fitting_concentrations[0])
+        ylabel1 = '[{specie}] ({units})'
+        fig['layout']['xaxis'].update(title_text='Time ' + '(' + self.fitter.model.time_units + ')')
+        fig['layout']['yaxis'].update(title_text=ylabel1.format(specie=self.fitter.observable_specie, units=self.fitter.model.concentration_units))
+
+        fig['layout']['xaxis2'].update(title_text='Time ' + '(' + self.fitter.model.time_units + ')')
+        fig['layout']['yaxis2'].update(title_text='SSE')
+        return fig, base_title
+
+    def _generate_slider_update(self):
+        def update(new_value):
+            new_value = new_value['new']
+            self.residual_fig.data[0].y = self.fitter.ground_truth_data[new_value]
+            self.residual_fig.data[1].y = self.fitter.fits[new_value]
+            self.residual_fig.data[2].y = self.fitter.residuals[new_value]
+            self.residual_fig.layout.title = self.base_title.format(self.fitter.fitting_concentrations[new_value])
+            return
+        return update
+
+    def _initialize_slider(self):
+        slider = widgets.IntSlider(
+            value=0,
+            min=0,
+            max=len(self.fitter.fitting_concentrations)-1,
+            step=1,
+            continuous_update=False,
+            description='Index'
+        )
+        slider.observe(self._generate_slider_update(), 'value')
+        return slider
+
+    def launch_residual_figure(self):
+        return VBox([self.residual_fig] + [self.slider])
 
 class Slider:
     """
