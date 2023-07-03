@@ -8,7 +8,7 @@ Ensure you have both [anaconda](https://docs.conda.io/projects/conda/en/latest/i
 
 ## Setup
 
-Before running any cells, you will need to first create a virtual environment for this notebook. To do this, navigate to the directory containing this notebook and run the following command in your terminal:
+Before utilizing this, you will need to first create a virtual environment for this notebook. To do this, navigate to the directory containing this notebook and run the following command in your terminal:
 
 <code>conda env create -f environment.yml</code>
 
