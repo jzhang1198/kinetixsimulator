@@ -1,6 +1,6 @@
 # Kinetics Simulator
 
-This notebook allows you to simulate the kinetics of an arbitrary chemical reaction network.
+This notebook allows you to simulate the kinetics of a chemical reaction network.
 
 ## Before You Begin
 
@@ -8,11 +8,8 @@ Ensure you have both [anaconda](https://docs.conda.io/projects/conda/en/latest/i
 
 ## Setup
 
-Before running any cells, you will need to first create a virtual environment for this notebook. To do this, navigate to the directory containing this notebook and run the following command in your terminal:
+Before utilizing this, you will need to first create a virtual environment for this notebook. To do this, navigate to the directory containing this notebook and run the following command in your terminal:
 
-<<<<<<< HEAD
-<code>conda env create -f environment.yml</code>
-=======
 <code>conda env create -f environment.yml</code>
 
 ## Theory
@@ -36,4 +33,3 @@ When writing these dictionaries, ensure you abide by the following conventions:
 The simulation algorithm may produce un-physical solutions for systems with very fast kinetics. Be careful when assigning large values to rate constants. I am actively working on implementing changes to enable better handling of these systems.
 
 I've also noticed that, in rare cases, the plot itself will not render. I believe this is an issue with ipywidgets, but I'm not entirely sure what the exact issue is. Usually, a combination of kernel restarts and re-running cells will resolve the issue.
->>>>>>> development
