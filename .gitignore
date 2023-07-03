@@ -83,15 +83,4 @@ fabric.properties
 .ipynb_checkpoints/
 
 __pycache__/
-
-<<<<<<< HEAD
 *.pyc
-.idea/
-_data/
-data/
-databases/
-.DS_Store
-.pytest_cache/
-=======
-*.pyc
->>>>>>> development
