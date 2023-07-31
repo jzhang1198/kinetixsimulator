@@ -43,7 +43,7 @@ class ChemicalReactionNetwork:
 
         self.species = list(set([specie for specie in sum([i.split(' ') for i in reaction_dict.keys()], []) if specie not in characters and not specie.isnumeric()])) #parses through chemical equation strings to find all unique species
         self._reaction_dict = ChemicalReactionNetwork._process_reaction_dict(reaction_dict)
-        self.mass_action_reactions, self.michaelis_menten_reactions = ChemicalReactionNetwork._parse_reaction_dict(self._reaction_dict, self.species)
+        self.mass_action_reactions = ChemicalReactionNetwork._parse_reaction_dict(self._reaction_dict, self.species)
         self.time, self.timestep = time, time[1] - time[0]
         self.initial_concentrations = np.array([initial_concentrations[specie] if specie in initial_concentrations.keys() else 1e-50 for specie in self.species]) #generates initial values based on initial_concentrations
         self.update_dictionary = self._create_update_dictionary()
@@ -62,7 +62,7 @@ class ChemicalReactionNetwork:
             if 'fit' not in reaction_dict[reaction].keys():
                 reaction_dict[reaction]['fit'] = False
 
-            difference = {'model', 'rate-constants', 'rate-constant-names'}.difference(set(reaction_dict[reaction].keys()))
+            difference = {'rate-constants', 'rate-constant-names'}.difference(set(reaction_dict[reaction].keys()))
             if len(difference) != 0:
                 message = '{reaction} missing the following keys: {keys}'
                 raise utils.MalformedRxnError(message.format(reaction=reaction, keys=', '.join(list(difference))))
@@ -73,33 +73,27 @@ class ChemicalReactionNetwork:
                 split[split.index('<->')] = '->'
                 _forward, _reverse = split, split
                 forward, reverse = ' '.join(_forward), ' '.join(_reverse[::-1])
-                updated_reaction_dict[forward] = {'rate-constants': reaction_dict[reaction]['rate-constants'][0], 'model': reaction_dict[reaction]['model'], 'rate-constant-names': reaction_dict[reaction]['rate-constant-names'][0]}
-                updated_reaction_dict[reverse] = {'rate-constants': reaction_dict[reaction]['rate-constants'][1], 'model': reaction_dict[reaction]['model'], 'rate-constant-names': reaction_dict[reaction]['rate-constant-names'][1]}
+                updated_reaction_dict[forward] = {'rate-constants': reaction_dict[reaction]['rate-constants'][0], 'rate-constant-names': reaction_dict[reaction]['rate-constant-names'][0]}
+                updated_reaction_dict[reverse] = {'rate-constants': reaction_dict[reaction]['rate-constants'][1], 'rate-constant-names': reaction_dict[reaction]['rate-constant-names'][1]}
             else:
                 updated_reaction_dict[reaction] = reaction_dict[reaction]
         return updated_reaction_dict
 
     @staticmethod
     def _parse_reaction_dict(reaction_dict: dict, species: list):
-        mass_action_dict = dict([(key, value) for key, value in zip(reaction_dict.keys(), reaction_dict.values()) if reaction_dict[key]['model'] == 'mass-action'])
-        michaelis_menten_dict = dict([(key, value) for key, value in zip(reaction_dict.keys(), reaction_dict.values()) if reaction_dict[key]['model'] == 'michaelis-menten'])
-        return ChemicalReactionNetwork._parse_mass_action(mass_action_dict, species), ChemicalReactionNetwork._parse_michaelis_menten(michaelis_menten_dict, species)
-
-    @staticmethod
-    def _parse_mass_action(mass_action_dict: dict, species: list):
         """
         Static method for processing dictionaries with reactions to
         be modeled with mass action kinetics.
         """
 
         #if no mass action reactions, instantiate a dummy
-        if len(mass_action_dict) == 0:
+        if len(reaction_dict) == 0:
             return MassActionReactions()
 
         A, N, rate_names, rates = [], [], [], []
-        reactions = list(mass_action_dict.keys())
+        reactions = list(reaction_dict.keys())
         for reaction in reactions:
-            rate_names.append(mass_action_dict[reaction]['rate-constant-names']), rates.append(mass_action_dict[reaction]['rate-constants'])
+            rate_names.append(reaction_dict[reaction]['rate-constant-names']), rates.append(reaction_dict[reaction]['rate-constants'])
             b, a = np.zeros(len(species)), np.zeros(len(species))
 
             #split chemical equation into products and substrates
@@ -121,50 +115,6 @@ class ChemicalReactionNetwork:
             N.append(b-a)
         return MassActionReactions(reactions, A, N, rate_names, rates)
 
-    @staticmethod
-    def _parse_michaelis_menten(michaelis_menten_dict: dict, species: list):
-        """
-        Static method for processing dictionaries with reactions to
-        be modeled with MM kinetics.
-        """
-
-        #if no MM reactions, instantiate a dummy
-        if len(michaelis_menten_dict) == 0:
-            return MichaelisMentenReactions()
-        
-        substrates, enzymes, products, Kms, kcats = [], [], [], [], []
-        reactions, values = michaelis_menten_dict.keys(), michaelis_menten_dict.values()
-        for reaction, value in zip(reactions, values):
-            Km_key, kcat_key = value['rate-constant-names']
-
-            #split reaction equation into substrates and products
-            _left, _right = reaction.split('->')
-            left, right = [re.sub(re.compile(r'\s+'), '', sub).split('*') for sub in _left.split('+')], [re.sub(re.compile(r'\s+'), '', prod).split('*') for prod in _right.split('+')]
-            left_species, left_stoichios, right_species, right_stoichios = [], [], [], []
-            for specie in left:
-                name = specie[1] if len(specie) == 2 else specie[0]
-                left_species.append(name)
-                stoichiometry_coeff = int(specie[0]) if len(specie) == 2 else 1
-                left_stoichios.append(stoichiometry_coeff)
-            for specie in right:
-                name = specie[1] if len(specie) == 2 else specie[0]
-                right_species.append(name)
-                stoichiometry_coeff = int(specie[0]) if len(specie) == 2 else 1
-                right_stoichios.append(stoichiometry_coeff)
-                    
-            enzyme = list(set(left_species).intersection(set(right_species)))[0] #enzyme is present on both sides of equation
-            substrate = list(set(left_species) - set([enzyme]))[0] 
-            product = list(set(right_species) - set([enzyme]))[0] 
-            substrate_index, enzyme_index, product_index = species.index(substrate), species.index(enzyme), species.index(product)
-            substrate_stoichiometry, product_stoichiometry = left_stoichios[left_species.index(substrate)], right_stoichios[right_species.index(product)]
-
-            substrates.append((substrate_index, substrate_stoichiometry))
-            products.append((product_index, product_stoichiometry))
-            enzymes.append(enzyme_index)
-            Kms.append((Km_key, value['rate-constants'][0]))
-            kcats.append((kcat_key, value['rate-constants'][1]))
-        return MichaelisMentenReactions(list(reactions), substrates, enzymes, products, Kms, kcats)
-
     def _make_update_function(self, index: int, token: str):
         """ 
         Private method for defining functions to update rate constants
@@ -174,10 +124,6 @@ class ChemicalReactionNetwork:
         def update(new_value):
             if token == 'rate_constant':
                 self.mass_action_reactions.K[index, index] = new_value
-            elif token == 'Km':
-                self.michaelis_menten_reactions.Kms[index] = new_value
-            elif token == 'kcat':
-                self.michaelis_menten_reactions.kcats[index] = new_value
             elif token == 'initial_concentration':
                 self.initial_concentrations[index] = new_value
         return update
@@ -188,35 +134,17 @@ class ChemicalReactionNetwork:
         rate constant as a key name will yield a function for updating it.
         """
 
-        mass_action_update, michaelis_menten_update, initial_concen_update = {}, {}, {}
+        mass_action_update, initial_concen_update = {}, {}
         if self.mass_action_reactions.reactions:
             for rate_index, rate_name in enumerate(self.mass_action_reactions.rate_names):
                 mass_action_update[rate_name] = self._make_update_function(rate_index, 'rate_constant')
-        if self.michaelis_menten_reactions.reactions:
-            for index, (Km_name, kcat_name) in enumerate(zip(self.michaelis_menten_reactions.Km_names, self.michaelis_menten_reactions.kcat_names)):
-                michaelis_menten_update[Km_name], michaelis_menten_update[kcat_name] = self._make_update_function(index, 'Km'), self._make_update_function(index, 'kcat')
         for index, specie in enumerate(self.species):
             initial_concen_update[specie] = self._make_update_function(index, 'initial_concentration')
-        return {**mass_action_update, **michaelis_menten_update, **initial_concen_update}
+        return {**mass_action_update, **initial_concen_update}
 
     def _define_ODEs(self):
-        if type(self.mass_action_reactions.reactions) == list:
-            def compute_mass_action_rates(concentrations):
-                return np.dot(self.mass_action_reactions.N.T, np.dot(self.mass_action_reactions.K, np.prod(np.power(concentrations, self.mass_action_reactions.A), axis=1)))
-        elif self.mass_action_reactions.reactions == None:
-            empty = np.zeros(len(self.species))
-            def compute_mass_action_rates(concentrations):
-                return empty
-        if type(self.michaelis_menten_reactions.reactions) == list:
-            def compute_michaelis_menten_rates(concentrations, michaelis_menten_reactions):
-                return michaelis_menten_reactions.compute_velocities(concentrations)
-        elif self.michaelis_menten_reactions.reactions == None:
-            empty = np.zeros(len(self.species))
-            def compute_michaelis_menten_rates(concentrations, michaelis_menten_reactions):
-                return empty
-
-        def ODEs(concentrations: np.ndarray, time: np.ndarray, michaelis_menten_reactions):
-            return np.vstack((compute_michaelis_menten_rates(concentrations, michaelis_menten_reactions), compute_mass_action_rates(concentrations))).sum(axis=0)
+        def ODEs(concentrations: np.ndarray, time: np.ndarray):
+            return np.dot(self.mass_action_reactions.N.T, np.dot(self.mass_action_reactions.K, np.prod(np.power(concentrations, self.mass_action_reactions.A), axis=1)))
         return ODEs
 
     def integrate(self, initial_concentrations: np.ndarray, time: np.ndarray, rtol=None, atol=None, inplace=True):
@@ -229,9 +157,9 @@ class ChemicalReactionNetwork:
         of the numerical integrator.
         """
         if inplace:
-            self.concentrations = odeint(self.ODEs, initial_concentrations, time, args=(self.michaelis_menten_reactions,), rtol=rtol, atol=atol).T
+            self.concentrations = odeint(self.ODEs, initial_concentrations, time, rtol=rtol, atol=atol).T
         else:
-            return odeint(self.ODEs, initial_concentrations, time, args=(self.michaelis_menten_reactions,), rtol=rtol, atol=atol).T
+            return odeint(self.ODEs, initial_concentrations, time, rtol=rtol, atol=atol).T
 
 class BindingReaction(ChemicalReactionNetwork):
     """
@@ -340,77 +268,7 @@ class MassActionReactions:
             self.A = np.vstack(A)
             self.rate_names = rate_names
             self.K = np.diag(np.array(rates))
-            # self.NK = np.dot(self.N.T, self.K)
 
         else:
             #set up handling of exceptions
             pass
-
-class MichaelisMentenReactions:
-    """ 
-    Class for reactions modelled with MM kinetics.
-
-    Attributes
-    ----------
-    reactions: list
-        A list of chemical equations represented as strings.
-    substrate_indices: np.ndarray 
-        Indices of substrate species. Indexed by reaction.
-    substrate_stoichiometries: np.ndarray
-        Stoichiometries of substrates. Indexed by reaction.
-    product_indices: np.ndarray 
-        Indices of product species. Indexed by reaction.
-    product_stoichiometries: np.ndarray 
-        Stoichiometries of products. Indexed by reaction.
-    enzyme_indices: np.ndarray
-        Indices of enzyme species. Indexed by reaction.
-    Km_names: np.ndarray
-        Names of Km constants for each reaction.
-    Kms: np.ndarray
-        Values of Km constants for each reaction.
-    kcat_names: np.ndarray
-        Names of kcat constants for each reaction.
-    kcats: np.ndarray
-        Values of kcat constants for each reaction.
-    """
-
-    def __init__(self, reactions=None, substrates=None, enzymes=None, products=None, Kms=None, kcats=None):
-        args = [reactions, substrates, enzymes, products, Kms, kcats]
-        types = [type(arg) for arg in args]
-
-        #if no arguments passed, instantiate a dummy
-        if set(types) == set([type(None)]):
-            self.reactions, self.substrate_indices, self.substrate_stoichiometries, self.product_indices, self.product_stoichiometries, \
-            self.enzyme_indices, self.Km_names, self.Kms, self.kcat_names, self.kcats = [None] * 10
-
-        #otherwise, instantiate a bonafide object
-        elif set(types) == set([list]):
-            self.reactions = reactions
-            self.substrate_indices, self.substrate_stoichiometries = map(np.array,zip(*substrates))
-            self.product_indices, self.product_stoichiometries = map(np.array,zip(*products))
-            self.enzyme_indices = enzymes
-            self.Km_names, self.Kms = map(np.array,zip(*Kms))
-            self.kcat_names, self.kcats = map(np.array,zip(*kcats))
-
-        else:
-            #include something for error handling   
-            pass
-        
-    def compute_velocities(self, concentrations: np.ndarray):
-        """ 
-        Function for vectorized calculation of MM rates using the
-        quadratic MM equation (no free ligand approximation).
-        """
-
-        substrate_velocities, product_velocities = np.zeros(len(concentrations)), np.zeros(len(concentrations))
-        substrate_vector = concentrations[self.substrate_indices]   
-        enzyme_vector = concentrations[self.enzyme_indices] 
-
-        term1 = np.vstack((substrate_vector, enzyme_vector, self.Kms)).sum(axis=0)
-        t1, t2 = np.square(term1), np.vstack((enzyme_vector, substrate_vector)).prod(axis=0) * 4
-        term2 = np.sqrt(np.subtract(t1, t2))
-        _velocities = np.vstack((np.subtract(term1, term2), np.divide(self.kcats, 2))).prod(axis=0)
-
-        substrate_velocities[self.substrate_indices] = np.vstack((_velocities, self.substrate_stoichiometries)).prod(axis=0) * -1
-        product_velocities[self.product_indices] = np.vstack((_velocities, self.product_stoichiometries)).prod(axis=0)
-        return np.vstack((substrate_velocities, product_velocities)).sum(axis=0)
