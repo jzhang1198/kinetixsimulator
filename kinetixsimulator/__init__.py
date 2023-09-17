@@ -1,6 +1,6 @@
 """
-Kinetics_Simulator
-Pinney Lab 2022
+kinetixsimulator
+Jonathan Zhang 2022
 """
 
 from . import utils
