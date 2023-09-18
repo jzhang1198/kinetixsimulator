@@ -5,52 +5,60 @@ This file contains classes for graphical user interfaces (guis).
 """
 
 #imports 
-import warnings
 import threading
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from ipywidgets import VBox, widgets
-
-from .utils import SliderNameNotFoundWarning
+from ipywidgets import VBox, HBox, widgets
 
 class ProgressCurveGUI:
-    def __init__(self, chemical_reaction_network, figsize=(8,8), title='Mass Action Kinetics', fontsize=12, multithread=False, tol=None, sliders=[]):
-        self.chemical_reaction_network = chemical_reaction_network
-        self.figsize, self.title, self.fontsize, self.multithread, self.tol, self.sliders = figsize, title, fontsize, multithread, tol, sliders
-        self.fig = self._initialize_figure()
+    def __init__(
+            self, 
+            figsize=(8,8), 
+            title='Mass Action Kinetics', 
+            fontsize=12,
+            multithread=False, 
+            atol: float = 1.5e-8,
+            rtol: float = 1.5e-8
+            ):
+        
+        self.figsize = figsize
+        self.title = title
+        self.fontsize = fontsize
+        self.multithread = multithread
+        self.atol = atol
+        self.rtol = rtol 
+    
+    def _init_figure(self, reaction_network: ChemicalReactionNetwork):
 
-    def _get_data(self):
-        self.chemical_reaction_network.integrate(self.chemical_reaction_network.initial_concentrations, self.chemical_reaction_network.time, rtol=self.tol, atol=self.tol)
+        # integrate reaction network and get data
+        reaction_network.integrate()
         data = []
-        for specie, concentration in zip(self.chemical_reaction_network.species, self.chemical_reaction_network.concentrations):
+        for specie, concentration in zip(reaction_network.species_collection.names, reaction_network.simulated_data):
             data.append(dict(
                 type='scatter',
-                x=self.chemical_reaction_network.time,
+                x=reaction_network.time,
                 y=concentration,
                 name=specie
             ))
-        return data
 
-    def _initialize_figure(self):
-        data = self._get_data()
         fig = go.FigureWidget(data=data)
         fig.layout.title = self.title
         yaxis_text, xaxis_text = 'Concentration ({concen})', 'Time ({time})'
-        fig.layout.yaxis.title = yaxis_text.format(concen=self.chemical_reaction_network.concentration_units)
-        fig.layout.xaxis.title = xaxis_text.format(time=self.chemical_reaction_network.time_units)
+        fig.layout.yaxis.title = yaxis_text.format(concen=reaction_network.concentration_units)
+        fig.layout.xaxis.title = xaxis_text.format(time=reaction_network.time_units)
         return fig
 
-    def _generate_slider_update_function(self, name: str):
+    def _generate_slider_update_function(self, name: str, reaction_network: ChemicalReactionNetwork, fig):
         multithreading = self.multithread
 
         def update_reaction_network(new_value):
-            self.chemical_reaction_network.update_dictionary[name](new_value)
-            self.chemical_reaction_network.integrate(self.chemical_reaction_network.initial_concentrations, self.chemical_reaction_network.time, rtol=self.tol, atol=self.tol)
+            reaction_network.update_dictionary[name](new_value)
+            reaction_network.integrate(atol=self.atol, rtol=self.rtol)
 
         def update_figure():
-            for specie_ind, concens in enumerate(self.chemical_reaction_network.concentrations): 
-                with self.fig.batch_update():
-                    self.fig.data[specie_ind].y = concens
+            for specie_ind, simulated_curve in enumerate(reaction_network.simulated_data): 
+                with fig.batch_update():
+                    fig.data[specie_ind].y = simulated_curve
 
         def slider_update(new_value):
             new_value = new_value['new']
@@ -68,53 +76,87 @@ class ProgressCurveGUI:
 
         return slider_update
 
-    def _instantiate_sliders(self):
-        slider_list = []
-        for _slider in self.sliders:
+    def _init_sliders(self, reaction_network, fig):
 
-            if _slider.name in self.chemical_reaction_network.species:
-                start = self.chemical_reaction_network.initial_concentrations[self.chemical_reaction_network.species.index(_slider.name)]                
-            elif _slider.name in self.chemical_reaction_network.mass_action_reactions.rate_names:
-                ind = self.chemical_reaction_network.mass_action_reactions.rate_names.index(_slider.name)
-                start = self.chemical_reaction_network.mass_action_reactions.K[ind, ind]
-            elif _slider.name in self.chemical_reaction_network.michaelis_menten_reactions.Km_names:
-                ind = self.chemical_reaction_network.michaelis_menten_reactions.Km_names.index(_slider.name)
-                start = self.chemical_reaction_network.michaelis_menten_reactions.Kms[ind]
-            elif _slider.name in self.chemical_reaction_network.michaelis_menten_reactions.kcat_names:
-                ind = self.chemical_reaction_network.michaelis_menten_reactions.kcat_names.index(_slider.name)
-                start = self.chemical_reaction_network.michaelis_menten_reactions.kcats[ind]
-            else:
-                warnings.warn(slider.name, SliderNameNotFoundWarning)
-                continue
+        n_steps_def = 1000
+        slider_list, log_slider_list = [], []
+        for name in reaction_network.species_collection.names + reaction_network.mass_action_reactions.rconst_names:
 
-            if _slider.scale == 'log':
-                slider = widgets.FloatLogSlider(
-                    value=start,
-                    min=_slider.min,
-                    max=_slider.max,
-                    step=_slider.stepsize,
-                    continuous_update=_slider.continuous_update,
-                    description=_slider.name
-                )
-                slider.observe(self._generate_slider_update_function(_slider.name), names='value')
+            # get slider data
+            if name in reaction_network.species_collection.names:
+                value = reaction_network.species_collection.get_specie_value(name)
+                lb = reaction_network.species_collection.get_specie_lb(name)
+                ub = reaction_network.species_collection.get_specie_ub(name)
 
-            elif _slider.scale == 'linear':
-                slider = widgets.FloatSlider(
-                    value=start, 
-                    base=_slider.base,
-                    min=_slider.min,
-                    max=_slider.max,
-                    step=_slider.stepsize,
-                    continuous_update=_slider.continuous_update,
-                    description=_slider.name)
-                slider.observe(self._generate_slider_update_function(_slider.name), names='value')
+            else: 
+                value = reaction_network.mass_action_reactions.get_rconst_value(name)
+                lb = reaction_network.mass_action_reactions.get_rconst_lb(name)
+                ub = reaction_network.mass_action_reactions.get_rconst_ub(name)
 
-            slider_list.append(slider)
-        return slider_list
+            stepsize = (ub - lb) / (n_steps_def - 1)
+        
+            log_lb = -50 if lb == 0 else np.log10(lb)
+            log_ub = -50 if ub == 0 else np.log10(ub)
+            log_value = 1e-50 if value == 0 else value
+            log_stepsize = (log_ub - log_lb) / (n_steps_def - 1)
 
-    def interactive(self):
-        sliders = self._instantiate_sliders()
-        return VBox([self.fig] + sliders)
+            # make sliders 
+            slider = widgets.FloatSlider(
+                value=value,
+                min=lb,
+                max=ub,
+                step=stepsize,
+                continuous_update=True,
+                description=name
+            )
+            slider.observe(self._generate_slider_update_function(name, reaction_network, fig), names='value')
+            log_slider = widgets.FloatLogSlider(
+                value=log_value,
+                min=log_lb,
+                max=log_ub,
+                base=10,
+                step=log_stepsize,
+                continuous_update=True,
+                description=name
+            )
+            log_slider.observe(self._generate_slider_update_function(name, reaction_network, fig), names='value')
+            slider_list.append(slider), log_slider_list.append(log_slider)
+
+        return slider_list, log_slider_list
+    
+    def _init_toggle_buttons(self, sliders: list, log_sliders: list):
+        slider_containers = []
+        slider_dict = {}  # Dictionary to keep track of active sliders for each pair
+        
+        for slider, log_slider in zip(sliders, log_sliders):
+            # Initialize the active slider as the linear slider
+            slider_dict[slider.description] = slider
+            
+            toggle_button = widgets.Button(description='Linear Scale')
+            
+            # Function to toggle between linear and log sliders
+            def toggle_scale(change, slider, log_slider, toggle_button, slider_container):
+                current_description = toggle_button.description
+                if current_description == 'Linear Scale':
+                    toggle_button.description = 'Log Scale'
+                    slider_dict[slider.description] = log_slider  # Update the active slider
+                else:
+                    toggle_button.description = 'Linear Scale'
+                    slider_dict[slider.description] = slider  # Update the active slider
+                # Update the HBox container with the new active slider
+                slider_container.children = [toggle_button, slider_dict[slider.description]]
+
+            slider_container = HBox([toggle_button, slider_dict[slider.description]])
+            slider_containers.append(slider_container)
+            toggle_button.on_click(lambda change, s=slider, ls=log_slider, tb=toggle_button, slider_container=slider_container: toggle_scale(change, s, ls, tb, slider_container))
+    
+        return VBox(slider_containers)
+
+    def launch(self, reaction_network: ChemicalReactionNetwork):
+        fig = self._init_figure(reaction_network)
+        sliders, log_sliders = self._init_sliders(reaction_network, fig)
+        slider_containers = self._init_toggle_buttons(sliders, log_sliders)
+        return VBox([fig] + [slider_containers])
 
 class BindingIsothermGUI(ProgressCurveGUI):
     def __init__(self, chemical_reaction_network, figsize=(8,8), title='Binding Kinetics', fontsize=12, multithread=False, tol=None, sliders=[]):
@@ -259,31 +301,3 @@ class FitPlotGUI:
 
     def launch_residual_figure(self):
         return VBox([self.residual_fig] + [self.slider])
-
-class Slider:
-    """
-    Utility class for storing slider attributes.
-
-    Attributes
-    ----------
-    name: str
-        The name of the rate constant or specie for the slider.
-    min: float
-        Minimum value for slider. If logscale, corresponds to 
-        the minimum exponent.
-    max: float
-        Maximum value for slider. If logscale, corresponds to 
-        the maximum exponent.
-    stepsize: float
-        Slider stepsize.
-    scale: str  
-        Can take on 'log' or 'linear'. 
-    base: float
-        If the scale is 'log', defines base of exponential.
-    continuous_update: bool
-        Determines if plots are continuously updated as slider
-        is moved. Should be set to False if dealing with complex
-        kinetic mechanisms.
-    """
-    def __init__(self, name: str, min=0, max=100, stepsize=1, scale='log', base=10, continuous_update=True):
-        self.name, self.min, self.max, self.stepsize, self.scale, self.base, self.continuous_update = name, min, max, stepsize, scale, base, continuous_update

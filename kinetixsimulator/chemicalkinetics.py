@@ -6,9 +6,102 @@ This file contains classes for modelling the kinetics of chemical reaction netwo
 
 #imports
 import re
+import numbers
 import numpy as np
 from scipy.integrate import odeint
+from typing import Union
 from scipy.optimize import curve_fit
+
+def mm_to_mass_action():
+    """ 
+    Identifies a mass action kinetic model consistent
+    with the provided Michaelis-Menten model.
+    """
+    pass
+
+class SpeciesCollection:
+    """ 
+    Utility class for organizing chemical species concentration data.
+    """
+
+    def __init__(self, names: list):
+        self.names = names
+        self.values, self.lb, self.ub, self._mapper = None, None, None, None 
+
+    def set_values_and_bounds(self, concentration_dict: dict):
+
+        value_def, lb_def, ub_def = 0, 0, 1e3
+        values = np.array([value_def if specie not in concentration_dict.keys() else concentration_dict[specie]['conc'] for specie in self.names])
+        lb = np.array([lb_def if specie not in concentration_dict.keys() else concentration_dict[specie]['conc-lb'] for specie in self.names])
+        ub = np.array([ub_def if specie not in concentration_dict.keys() else concentration_dict[specie]['conc-ub'] for specie in self.names])
+        self.values, self.lb, self.ub = values, lb, ub
+        self._mapper = dict([(name, index) for index, name in enumerate(self.names)])
+
+    def get_specie_value(self, name: str):
+        return self.values[self._mapper[name]]
+
+    def get_specie_lb(self, name: str):
+        return self.lb[self._mapper[name]] 
+
+    def get_specie_ub(self, name: str):
+        return self.ub[self._mapper[name]] 
+
+class MassActionReactions:
+    """ 
+    Utility class organizing reaction stoichiometries and rate constants.
+
+    Attributes
+    ----------
+    reactions: list
+        A list of chemical equations represented as strings.
+    A: np.ndarray
+        The substrate stoichiometry matrix for the mass action reactions.
+    N: np.ndarray
+        The reaction stoichiometry matrix for the mass action reactions.
+    rconst_names: list
+        A list of rate names for each rate constant.
+    rconst_values: list
+        A list of rate constant values.
+    rconst_lb: list
+        A list of lower bounds for rate constants.
+    rconst_ub: list
+        A list of upper bounds for rate constants.
+    K: np.ndarray
+        The rate matrix for the mass action reactions.
+    """
+
+    def __init__(
+            self, 
+            reactions:list, 
+            A: list, 
+            N: list, 
+            rconst_names: list, 
+            rconst_values: list , 
+            rconst_lb: list, 
+            rconst_ub: list
+            ):
+
+        # attributes holding stoichiometry and reaction data
+        self.reactions = reactions
+        self.N = np.vstack(N)
+        self.A = np.vstack(A)
+
+        # attributes holding rate constant data
+        self.rconst_names = rconst_names
+        self.rconst_values = rconst_values
+        self.rconst_lb = rconst_lb 
+        self.rconst_ub = rconst_ub
+        self.K = np.diag(np.array(rconst_values))
+        self._mapper = dict([name, index] for index, name in enumerate(self.rconst_names))
+
+    def get_rconst_value(self, name: str):
+        return self.rconst_values[self._mapper[name]]
+
+    def get_rconst_lb(self, name: str):
+        return self.rconst_lb[self._mapper[name]] 
+
+    def get_rconst_ub(self, name: str):
+        return self.rconst_ub[self._mapper[name]]
 
 class ChemicalReactionNetwork:
     """
@@ -35,24 +128,44 @@ class ChemicalReactionNetwork:
         Array of concentrations of each specie at each timepoint.
     """
 
-    def __init__(self, initial_concentrations: dict, reaction_dict: dict, time=np.linspace(0,100,100), concentration_units='µM', time_units='s'):
-        characters = {'*', '->', '+', '<->'}
+    def __init__(self, concentration_units='µM', time_units='s'):
 
-        if len(reaction_dict) < 1:
-            print('no reaction')
-
-        self.species = list(set([specie for specie in sum([i.split(' ') for i in reaction_dict.keys()], []) if specie not in characters and not specie.isnumeric()])) #parses through chemical equation strings to find all unique species
-        self._reaction_dict = ChemicalReactionNetwork._process_reaction_dict(reaction_dict)
-        self.mass_action_reactions = ChemicalReactionNetwork._parse_reaction_dict(self._reaction_dict, self.species)
-        self.time, self.timestep = time, time[1] - time[0]
-        self.initial_concentrations = np.array([initial_concentrations[specie] if specie in initial_concentrations.keys() else 1e-50 for specie in self.species]) #generates initial values based on initial_concentrations
-        self.update_dictionary = self._create_update_dictionary()
-        self.ODEs = self._define_ODEs()
-        self.concentrations = np.ndarray #create a placeholder for ODEs and concentrations attribute
         self.concentration_units, self.time_units = concentration_units, time_units
+        self.species_collection, self.mass_action_reactions = None, None
+        
+        self.time, self.timestep = None, None
+        self.species_collection = None
+        self.mass_action_reactions = None 
+        self.update_dictionary = None 
+        self.ODEs = None
+        self.simulated_data = None 
+
+    def from_dict(self, reaction_dict: dict):
+        """ 
+        Method for updating object with reaction network information from an 
+        input dictionary.
+        """
+
+        # parse the reaction_dict to ensure function assumptions are satisfied
+        assert type(reaction_dict) == dict, 'ChemicalReactionNetwork Error: reaction_dict must be a dictionary.'
+        assert len(reaction_dict) > 0, 'ChemicalReactionNetwork Error: reaction_dict cannot be empty.'
+        for key, value in reaction_dict.items():
+            assert isinstance(key, str), 'ChemicalReactionNetwork Error: keys within reaction_dict must be string representations of a chemical reaction.'
+            assert isinstance(value, dict), 'ChemicalReactionNetwork Error: values within reaction_dict must be dictionaries.'
+            assert set(value.keys()) == set(['model', 'rconst-names', 'rconst-values', 'rconst-lb', 'rconst-ub']), 'ChemicalReactionNetwork Error: Reaction keys must be mapped to a dictionary containing "model", "rconst-names", "rconst-values", "rconst-lb", and "rconst-ub" keys.'
+            assert value['model'] in set(['mass-action', 'michaelis-menten']), 'ChemicalReactionNetwork Error: "model" can only take on "mass-action" or "michaelis-menten".'
+            assert isinstance(value['rconst-names'], (list, np.ndarray, str)) and isinstance(value['rconst-values'], (list, np.ndarray, numbers.Number)), 'ChemicalReactionNetworkError: Bidirectional reactions must define rate constant information as arrays. Otherwise, rate constant information can be numeric or string .'
+
+        # update attributes
+        characters = {'*', '->', '+', '<->'}
+        species = list(set([specie for specie in sum([i.split(' ') for i in reaction_dict.keys()], []) if specie not in characters and not specie.isnumeric()]))
+        self.species_collection = SpeciesCollection(names = species)
+        updated_reaction_dict = ChemicalReactionNetwork._split_reversible_reactions(reaction_dict)
+        self.mass_action_reactions = self._parse_reaction_dict(updated_reaction_dict)
+        self.ODEs = self._define_ODEs()
 
     @staticmethod
-    def _process_reaction_dict(reaction_dict: dict):
+    def _split_reversible_reactions(reaction_dict: dict):
         """
         Splits reversible reactions into elementary reactions.
         """
@@ -62,38 +175,42 @@ class ChemicalReactionNetwork:
             if 'fit' not in reaction_dict[reaction].keys():
                 reaction_dict[reaction]['fit'] = False
 
-            difference = {'rate-constants', 'rate-constant-names'}.difference(set(reaction_dict[reaction].keys()))
-            if len(difference) != 0:
-                message = '{reaction} missing the following keys: {keys}'
-                raise utils.MalformedRxnError(message.format(reaction=reaction, keys=', '.join(list(difference))))
-
             if '<->' in reaction:
-                forward_constant, reverse_constant = reaction_dict[reaction]['rate-constant-names']
                 split = reaction.split(' ')
                 split[split.index('<->')] = '->'
                 _forward, _reverse = split, split
                 forward, reverse = ' '.join(_forward), ' '.join(_reverse[::-1])
-                updated_reaction_dict[forward] = {'rate-constants': reaction_dict[reaction]['rate-constants'][0], 'rate-constant-names': reaction_dict[reaction]['rate-constant-names'][0]}
-                updated_reaction_dict[reverse] = {'rate-constants': reaction_dict[reaction]['rate-constants'][1], 'rate-constant-names': reaction_dict[reaction]['rate-constant-names'][1]}
+                updated_reaction_dict[forward] = {
+                    'rconst-names': reaction_dict[reaction]['rconst-values'][0], 
+                    'rconst-lb': reaction_dict[reaction]['rconst-lb'][0], 
+                    'rconst-ub': reaction_dict[reaction]['rconst-ub'][0],
+                    'model': reaction_dict[reaction]['model'][0]
+                    }
+                updated_reaction_dict[reverse] = {
+                    'rconst-names': reaction_dict[reaction]['rconst-values'][1], 
+                    'rconst-lb': reaction_dict[reaction]['rconst-lb'][1], 
+                    'rconst-ub': reaction_dict[reaction]['rconst-ub'][1],
+                    'model': reaction_dict[reaction]['model'][1]
+                    }            
             else:
                 updated_reaction_dict[reaction] = reaction_dict[reaction]
         return updated_reaction_dict
 
-    @staticmethod
-    def _parse_reaction_dict(reaction_dict: dict, species: list):
+    def _parse_reaction_dict(self, reaction_dict: dict):
         """
         Static method for processing dictionaries with reactions to
         be modeled with mass action kinetics.
         """
 
-        #if no mass action reactions, instantiate a dummy
-        if len(reaction_dict) == 0:
-            return MassActionReactions()
+        species = self.species_collection.names
 
-        A, N, rate_names, rates = [], [], [], []
+        A, N, rconst_names, rconst_values, rconst_lb, rconst_ub  = [], [], [], [], [], []
         reactions = list(reaction_dict.keys())
         for reaction in reactions:
-            rate_names.append(reaction_dict[reaction]['rate-constant-names']), rates.append(reaction_dict[reaction]['rate-constants'])
+            rconst_names.append(reaction_dict[reaction]['rconst-names'])
+            rconst_values.append(reaction_dict[reaction]['rconst-values'])
+            rconst_lb.append(reaction_dict[reaction]['rconst-lb'])
+            rconst_ub.append(reaction_dict[reaction]['rconst-ub'])
             b, a = np.zeros(len(species)), np.zeros(len(species))
 
             #split chemical equation into products and substrates
@@ -113,7 +230,27 @@ class ChemicalReactionNetwork:
                 b[species.index(product)] = stoichiometry_coeff
             A.append(a)
             N.append(b-a)
-        return MassActionReactions(reactions, A, N, rate_names, rates)
+        return MassActionReactions(reactions, A, N, rconst_names, rconst_values, rconst_lb, rconst_ub)
+
+    def initialize(self, concentration_dict: dict, time: Union[list, np.ndarray]):
+        """
+        Method for defining initial conditions and time values. Also creates the
+        update dictionary.
+        """
+
+        # parse inputs 
+        # assert isinstance(initial_concentrations, dict), 'ChemicalReactionNetwork Error: initial_concentrations must be a dictionary.'
+        # assert set([isinstance(k, str) for k in initial_concentrations.keys()]) == set([True]) and set([isinstance(v, numbers.Number) for v in initial_concentrations.values()]) == set([True]), 'ChemicalReactionNetwork Error: keys and values within initial_concentrations must be strings and numerics, respectively.'
+        # assert set(initial_concentrations.keys()).issubset(set(self.species)), 'ChemicalReactionNetwork Error: keys within initial_concentrations must be a subset of the species within the reaction network.'
+        # assert len(set(initial_concentrations.keys())) == len(list(initial_concentrations.keys())), 'ChemicalReactionNetwork Error: initial_concentrations cannot contain duplicate keys.'
+        # assert isinstance(time, (list, np.ndarray)), 'ChemicalReactionNetwork Error: time must be either a list or np.ndarray.'
+        # time = np.array(time)
+        # assert time.ndim == 1, 'ChemicalReactionNetwork Error: time must be a 1 dimensional array.'
+        # assert set([isinstance(v, numbers.Number) for v in time]) == set([True]), 'ChemicalReactionNetwork Error: elements within time must be numerics.'
+
+        self.time, self.timestep = time, time[1] - time[0]
+        self.species_collection.set_values_and_bounds(concentration_dict)
+        self.update_dictionary = self._create_update_dictionary()
 
     def _make_update_function(self, index: int, token: str):
         """ 
@@ -123,9 +260,10 @@ class ChemicalReactionNetwork:
 
         def update(new_value):
             if token == 'rate_constant':
+                self.mass_action_reactions.rconst_values[index] = new_value
                 self.mass_action_reactions.K[index, index] = new_value
             elif token == 'initial_concentration':
-                self.initial_concentrations[index] = new_value
+                self.species_collection.values[index] = new_value
         return update
 
     def _create_update_dictionary(self):
@@ -136,9 +274,9 @@ class ChemicalReactionNetwork:
 
         mass_action_update, initial_concen_update = {}, {}
         if self.mass_action_reactions.reactions:
-            for rate_index, rate_name in enumerate(self.mass_action_reactions.rate_names):
+            for rate_index, rate_name in enumerate(self.mass_action_reactions.rconst_names):
                 mass_action_update[rate_name] = self._make_update_function(rate_index, 'rate_constant')
-        for index, specie in enumerate(self.species):
+        for index, specie in enumerate(self.species_collection.names):
             initial_concen_update[specie] = self._make_update_function(index, 'initial_concentration')
         return {**mass_action_update, **initial_concen_update}
 
@@ -147,7 +285,14 @@ class ChemicalReactionNetwork:
             return np.dot(self.mass_action_reactions.N.T, np.dot(self.mass_action_reactions.K, np.prod(np.power(concentrations, self.mass_action_reactions.A), axis=1)))
         return ODEs
 
-    def integrate(self, initial_concentrations: np.ndarray, time: np.ndarray, rtol=None, atol=None, inplace=True):
+    def integrate(
+            self, 
+            rtol: float = None, 
+            atol: float = None, 
+            inplace = True, 
+            noise_mu: float = 0,
+            noise_sigma: float = 0,
+            ):
         """ 
         Method for numerical integration of ODE system associated 
         with the reaction network. Outputs nothing, but re-defines 
@@ -156,10 +301,15 @@ class ChemicalReactionNetwork:
         :param rtol, atol: hyperparameters that control the error tolerance
         of the numerical integrator.
         """
+
+        simulated_data = odeint(self.ODEs, self.species_collection.values, self.time, rtol=rtol, atol=atol).T
+        noise_arr = np.random.normal(noise_mu, noise_sigma, simulated_data.shape)
+        simulated_data += noise_arr
+
         if inplace:
-            self.concentrations = odeint(self.ODEs, initial_concentrations, time, rtol=rtol, atol=atol).T
+            self.simulated_data = simulated_data
         else:
-            return odeint(self.ODEs, initial_concentrations, time, rtol=rtol, atol=atol).T
+            return simulated_data
 
 class BindingReaction(ChemicalReactionNetwork):
     """
@@ -232,43 +382,3 @@ class BindingReaction(ChemicalReactionNetwork):
 
         _, params = curve_fit(model, x, y)
         self.Kd_fit = params[0]
-
-class MassActionReactions:
-    """ 
-    Class for reactions modelled with mass action kinetics.
-
-    Attributes
-    ----------
-    reactions: list
-        A list of chemical equations represented as strings.
-    A: np.ndarray
-        The substrate stoichiometry matrix for the mass action reactions.
-    N: np.ndarray
-        The reaction stoichiometry matrix for the mass action reactions.
-    rate_names: list
-        A list of rate names for each rate constant.
-    K: np.ndarray
-        The rate matrix for the mass action reactions.
-    fit: np.ndarray
-        Array designating whether a reaction is to be fit.
-    """
-
-    def __init__(self, reactions=None, A=None, N=None, rate_names=None, rates=None):
-        args =  [reactions, A, N, rate_names, rates]
-        types = [type(arg) for arg in args]
-
-        #if no arguments passed, instantiate a dummy
-        if set(types) == set([type(None)]):
-            self.reactions, self.N, self.A, self.rate_names, self.K = [None] * 5
-
-        #otherwise, instantiate a bonafide object
-        elif set(types) == set([list]):
-            self.reactions = reactions
-            self.N = np.vstack(N)
-            self.A = np.vstack(A)
-            self.rate_names = rate_names
-            self.K = np.diag(np.array(rates))
-
-        else:
-            #set up handling of exceptions
-            pass
