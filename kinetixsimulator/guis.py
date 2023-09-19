@@ -1,7 +1,7 @@
 """ 
 Author: Jonathan Zhang <jon.zhang@ucsf.edu>
 
-This file contains classes for graphical user interfaces (guis).
+This file contains classes for graphical user interfaces.
 """
 
 #imports 
@@ -17,26 +17,22 @@ class ProgressCurveGUI:
             title='Mass Action Kinetics', 
             fontsize=12,
             multithread=False, 
-            atol: float = 1.5e-8,
-            rtol: float = 1.5e-8
             ):
         
         self.figsize = figsize
         self.title = title
         self.fontsize = fontsize
         self.multithread = multithread
-        self.atol = atol
-        self.rtol = rtol 
     
-    def _init_figure(self, reaction_network: ChemicalReactionNetwork):
+    def _init_figure(self, kinetic_model: KineticModel):
 
         # integrate reaction network and get data
-        reaction_network.integrate()
+        kinetic_model.simulate()
         data = []
-        for specie, concentration in zip(reaction_network.species_collection.names, reaction_network.simulated_data):
+        for specie, concentration in zip(kinetic_model.specie_names, kinetic_model.simulated_data):
             data.append(dict(
                 type='scatter',
-                x=reaction_network.time,
+                x=kinetic_model.time,
                 y=concentration,
                 name=specie
             ))
@@ -44,26 +40,26 @@ class ProgressCurveGUI:
         fig = go.FigureWidget(data=data)
         fig.layout.title = self.title
         yaxis_text, xaxis_text = 'Concentration ({concen})', 'Time ({time})'
-        fig.layout.yaxis.title = yaxis_text.format(concen=reaction_network.concentration_units)
-        fig.layout.xaxis.title = xaxis_text.format(time=reaction_network.time_units)
+        fig.layout.yaxis.title = yaxis_text.format(concen=kinetic_model.concentration_units)
+        fig.layout.xaxis.title = xaxis_text.format(time=kinetic_model.time_units)
         return fig
 
-    def _generate_slider_update_function(self, name: str, reaction_network: ChemicalReactionNetwork, fig):
+    def _generate_slider_update_function(self, name: str, kinetic_model: KineticModel, fig):
         multithreading = self.multithread
 
-        def update_reaction_network(new_value):
-            reaction_network.update_dictionary[name](new_value)
-            reaction_network.integrate(atol=self.atol, rtol=self.rtol)
+        def update_kinetic_model(new_value):
+            kinetic_model.update_dictionary[name](new_value)
+            kinetic_model.simulate()
 
         def update_figure():
-            for specie_ind, simulated_curve in enumerate(reaction_network.simulated_data): 
+            for specie_ind, simulated_curve in enumerate(kinetic_model.simulated_data): 
                 with fig.batch_update():
                     fig.data[specie_ind].y = simulated_curve
 
         def slider_update(new_value):
             new_value = new_value['new']
             if multithreading:
-                t1 = threading.Thread(target=update_reaction_network, args=(new_value,))
+                t1 = threading.Thread(target=update_kinetic_model, args=(new_value,))
                 t2 = threading.Thread(target=update_figure, args=())
                 t1.start()
                 t1.join()
@@ -71,33 +67,37 @@ class ProgressCurveGUI:
                 t2.join()
 
             else:
-                update_reaction_network(new_value)
+                update_kinetic_model(new_value)
                 update_figure()
 
         return slider_update
 
-    def _init_sliders(self, reaction_network, fig):
+    def _init_sliders(self, kinetic_model: KineticModel, fig, custom_slider_ranges: dict):
 
+        # set default slider params
         n_steps_def = 1000
+        specie_lb_def, specie_ub_def = 0, 1e3
+        rconst_lb_def, rconst_ub_def = 1e-8, 1e8
+
         slider_list, log_slider_list = [], []
-        for name in reaction_network.species_collection.names + reaction_network.mass_action_reactions.rconst_names:
+        for name in kinetic_model.specie_names + kinetic_model.rconst_names:
 
             # get slider data
-            if name in reaction_network.species_collection.names:
-                value = reaction_network.species_collection.get_specie_value(name)
-                lb = reaction_network.species_collection.get_specie_lb(name)
-                ub = reaction_network.species_collection.get_specie_ub(name)
-
-            else: 
-                value = reaction_network.mass_action_reactions.get_rconst_value(name)
-                lb = reaction_network.mass_action_reactions.get_rconst_lb(name)
-                ub = reaction_network.mass_action_reactions.get_rconst_ub(name)
-
+            if name in kinetic_model.specie_names:
+                index = kinetic_model.specie_names.index(name)
+                value = kinetic_model.specie_initial_concs[index]
+                lb = specie_lb_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][0]
+                ub = specie_ub_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][1]
+            else:
+                index = kinetic_model.rconst_names.index(name)
+                value = kinetic_model.rconst_values[index]
+                lb = rconst_lb_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][0]
+                ub = rconst_ub_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][1]
+            
             stepsize = (ub - lb) / (n_steps_def - 1)
-        
-            log_lb = -50 if lb == 0 else np.log10(lb)
-            log_ub = -50 if ub == 0 else np.log10(ub)
-            log_value = 1e-50 if value == 0 else value
+            log_lb = -10 if lb == 0 else np.log10(lb)
+            log_ub = -10 if ub == 0 else np.log10(ub)
+            log_value = 1e-10 if value == 0 else value
             log_stepsize = (log_ub - log_lb) / (n_steps_def - 1)
 
             # make sliders 
@@ -109,7 +109,7 @@ class ProgressCurveGUI:
                 continuous_update=True,
                 description=name
             )
-            slider.observe(self._generate_slider_update_function(name, reaction_network, fig), names='value')
+            slider.observe(self._generate_slider_update_function(name, kinetic_model, fig), names='value')
             log_slider = widgets.FloatLogSlider(
                 value=log_value,
                 min=log_lb,
@@ -119,7 +119,7 @@ class ProgressCurveGUI:
                 continuous_update=True,
                 description=name
             )
-            log_slider.observe(self._generate_slider_update_function(name, reaction_network, fig), names='value')
+            log_slider.observe(self._generate_slider_update_function(name, kinetic_model, fig), names='value')
             slider_list.append(slider), log_slider_list.append(log_slider)
 
         return slider_list, log_slider_list
@@ -140,9 +140,11 @@ class ProgressCurveGUI:
                 if current_description == 'Linear Scale':
                     toggle_button.description = 'Log Scale'
                     slider_dict[slider.description] = log_slider  # Update the active slider
+                    log_slider.value = slider.value
                 else:
                     toggle_button.description = 'Linear Scale'
                     slider_dict[slider.description] = slider  # Update the active slider
+                    slider.value = log_slider.value
                 # Update the HBox container with the new active slider
                 slider_container.children = [toggle_button, slider_dict[slider.description]]
 
@@ -152,9 +154,9 @@ class ProgressCurveGUI:
     
         return VBox(slider_containers)
 
-    def launch(self, reaction_network: ChemicalReactionNetwork):
-        fig = self._init_figure(reaction_network)
-        sliders, log_sliders = self._init_sliders(reaction_network, fig)
+    def launch(self, kinetic_model: KineticModel, custom_slider_ranges: dict = {}):
+        fig = self._init_figure(kinetic_model)
+        sliders, log_sliders = self._init_sliders(kinetic_model, fig, custom_slider_ranges)
         slider_containers = self._init_toggle_buttons(sliders, log_sliders)
         return VBox([fig] + [slider_containers])
 
@@ -196,7 +198,7 @@ class BindingIsothermGUI(ProgressCurveGUI):
 
     def _initialize_figure(self):
         progress_curve_data, fraction_bound_data = self._get_data()
-        Kd = self.chemical_reaction_network.mass_action_reactions.K[1,1] / self.chemical_reaction_network.mass_action_reactions.K[0,0]
+        Kd = self.chemical_reaction_network.reaction_collection.K[1,1] / self.chemical_reaction_network.reaction_collection.K[0,0]
         subs = make_subplots(cols=2, subplot_titles=['Progress Curves', 'Binding Isotherm'])
         fig = go.FigureWidget(subs)
 
