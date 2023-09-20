@@ -8,4 +8,4 @@ from . import chemicalkinetics
 from . import guis
 from . import globalfitter
 
-__version__ = '0.1.0'
+__version__ = "1.1.1"
