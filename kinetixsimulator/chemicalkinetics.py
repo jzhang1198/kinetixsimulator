@@ -7,7 +7,6 @@ This file contains classes for modelling the kinetics of chemical reaction netwo
 #imports
 import re
 import copy
-import numbers
 import numpy as np
 from scipy.integrate import odeint
 from typing import Union, List
@@ -55,7 +54,9 @@ class BidirectionalReaction:
         ):
         
         BidirectionalReaction._parse_inputs(reaction_string, rconst_names, rconst_values)
-        self.reactions = BidirectionalReaction.split(reaction_string, rconst_names, rconst_values)
+        self.reaction_string = reaction_string
+        self.rconst_names = rconst_names
+        self.rconst_values = rconst_values
 
     @staticmethod
     def _parse_inputs(
@@ -65,52 +66,61 @@ class BidirectionalReaction:
     ):
         pass
     
-    @staticmethod
-    def split(
-        reaction_string, 
-        rconst_names, 
-        rconst_values, 
-        ):
+    def split(self):
         """ 
-        Static method that splits the bidirectional reaction into two unimolecular
+        Method that splits the bidirectional reaction into two unimolecular
         reactions.
         """
 
-        split = reaction_string.split(' ')
+        split = self.reaction_string.split(' ')
         split[split.index('<->')] = '->'
         _forward, _reverse = split, split
         forward, reverse = ' '.join(_forward), ' '.join(_reverse[::-1])
 
         reactions = [
-            Reaction(forward, rconst_names[0], rconst_values[0]),
-            Reaction(reverse, rconst_names[1], rconst_values[1])
+            Reaction(forward, self.rconst_names[0], self.rconst_values[0]),
+            Reaction(reverse, self.rconst_names[1], self.rconst_values[1])
         ]
 
         return reactions
 
+class MMReaction:
+    """ 
+    Utility class for storing data for reactions modeled with 
+    Michaelis-Menten kinetics.
+    """
+
+    def __init__(
+            self, 
+            reaction_string: str, 
+            Km_name: str, 
+            Km_value: float, 
+            kcat_name: str, 
+            kcat_value: float
+        ):
+                    
+        self.reaction_string = reaction_string 
+        self.Km_name = Km_name
+        self.Km_value = Km_value
+        self.kcat_name = kcat_name
+        self.kcat_value = kcat_value
+
+    def split(self):
+
+        # update reaction strings
+        binding_reaction_string = self.reaction_string.split(' ->')[0]
+        chemical_reaction_string = self.reaction_string.split('<-> ')[-1]
+
+        split = binding_reaction_string.split(' ')
+        split[split.index('<->')] = '->'
+        _forward, _reverse = split, split
+        forward, reverse = ' '.join(_forward), ' '.join(_reverse[::-1])
+
+        return [forward, reverse, chemical_reaction_string]
+        
 class KineticModel:
     """
     Class for an arbitrary network of chemical reactions.
-
-    Attributes
-    ----------
-    species: list
-        A list of all chemical species present.
-    reaction_collection: list
-        A list of MassActionReactions objects, each describing a
-        reaction modelled by mass action kinetics.
-    michaelis_menten_reactions: list
-        A list of MichaelisMentenReactions objectseach 
-        describing a reaction modelled by MM kinetics.
-    time: np.ndarray
-        An array of times to solve over.
-    initial_concentrations: np.ndarray  
-        Defines the initial state of the chemical system.
-    update_dictionary: dict
-        A dictionary of functions for updating reaction rates or 
-        initial concentrations. 
-    concentrations: np.ndarray
-        Array of concentrations of each specie at each timepoint.
     """
 
     def __init__(
@@ -119,78 +129,127 @@ class KineticModel:
             reactions: List[Union[Reaction, BidirectionalReaction]],
             integrator_atol: float = 1.5e-8,
             integrator_rtol: float = 1.5e-8,
-            concentration_units='µM', 
+            concentration_units='uM', 
             time_units='s'
             ):
         
-        # define an attribute containing only unidirectional reactions, for simplicity
-        unidirectional_reactions = [reaction for reaction in reactions if isinstance(reaction, Reaction)]
-        bidirectional_reactions = [reaction for reaction in reactions if isinstance(reaction, BidirectionalReaction)]
-        for reaction in bidirectional_reactions:
-            unidirectional_reactions += reaction.reactions
-        self.reactions = unidirectional_reactions
-
+        # segregate reactions
+        unimolecular_reactions = [reaction for reaction in reactions if isinstance(reaction, Reaction)]
+        unimolecular_reactions += np.array([reaction.split() for reaction in reactions if isinstance(reaction, BidirectionalReaction)]).flatten().tolist()
+        MM_reactions = [reaction for reaction in reactions if isinstance(reaction, MMReaction)]
+        self.reactions = unimolecular_reactions
+        self.MM_reactions = MM_reactions
+        
         # define time attributes
         self.time = time 
         self.time_units = time_units
 
-        # define mass action matrices
-        A, N, K, species, rconst_names, rconst_values = self.define_mass_action_matrices()
-        self.A = A
-        self.N = N
-        self.K = K
-        self.rconst_names = rconst_names
-        self.rconst_values = rconst_values 
+        # define specie attributes
+        self.species = self._define_species()
+        self.specie_initial_concs = [0] * len(self.species)
+        self.concentration_units = concentration_units
+
+        # define diffusion-limited rate consistent with provided units
+        self.kon = self._define_kon()
+
+        # define reaction attributes
+        self.A, self.N, self.rconst_names, self.rconst_values, self.MM_rconst_names, self.MM_rconst_values = self._define_rconsts_and_stoichiometries()
+        self.K = None
 
         # define attributes acessed by the integrator
-        self.ODEs = self._define_ODEs()
         self.atol = integrator_atol
         self.rtol = integrator_rtol
-
-        # define species attributes
-        self.specie_names = species 
-        self.specie_initial_concs = [0] * len(species)
-        self.concentration_units = concentration_units
+        self.ODEs = self._define_ODEs()
 
         # define and store update functions in a dict
         self.update_dictionary = self._create_update_dictionary()
 
-        # attributes to be defined
+        # dynamic attribute to hold simulated data
         self.simulated_data = None 
 
-    def define_mass_action_matrices(self):
+    def _define_kon(self):
 
+        def_kon = 1e8
+
+        to_uM = {
+            "M": 1e6,
+            "mM": 1e3,
+            "uM": 1,
+            "nM": 1e-3,
+            "pM": 1e-6,
+            "fM": 1e-9
+        }
+
+        to_s = {
+            "day": 86400,
+            'hour': 3600,
+            'minute': 60,
+            's': 1,
+            'ms': 1e-3,
+            'us': 1e-3,
+            'ns': 1e-3,
+            'ps': 1e-3,
+            'fs': 1e-3,
+        }
+
+        uM_conversion = to_uM[self.concentration_units]
+        s_conversion = to_s[self.time_units]
+
+        kon = def_kon * uM_conversion * s_conversion
+        return kon
+
+    def _define_species(self):
         characters = {'*', '->', '+', '<->'}
-        species = list(set([specie for specie in sum([i.reaction_string.split(' ') for i in self.reactions], []) if specie not in characters and not specie.isnumeric()]))
+        species = list(set([specie for specie in sum([i.reaction_string.split(' ') for i in self.reactions + self.MM_reactions], []) if specie not in characters and not specie.isnumeric()]))
+        return species
+
+    @staticmethod
+    def _parse_reaction_string(reaction_string: str, a: np.ndarray, b: np.ndarray, species: list):
+
+        #split chemical equation into products and substrates
+        _substrates, _products = reaction_string.split('->')
+        _substrates, _products = [re.sub(re.compile(r'\s+'), '', sub).split('*') for sub in _substrates.split('+')], [re.sub(re.compile(r'\s+'), '', prod).split('*') for prod in _products.split('+')]
+        for _substrate in _substrates:
+            # get substrate stoichiometries and names
+            substrate = _substrate[1] if len(_substrate) == 2 else _substrate[0]
+            stoichiometry_coeff = int(_substrate[0]) if len(_substrate) == 2 else 1
+            a[species.index(substrate)] = stoichiometry_coeff
+
+        for _product in _products:
+            # get product stoichiometries and names
+            if _product == ['0']:
+                continue
+            product = _product[1] if len(_product) == 2 else _product[0]
+            stoichiometry_coeff = int(_product[0]) if len(_product) == 2 else 1
+            b[species.index(product)] = stoichiometry_coeff
+
+        return a, b
+
+    def _define_rconsts_and_stoichiometries(self):
 
         A, N, rconst_names, rconst_values  = [], [], [], []
         for reaction in self.reactions:
             rconst_names.append(reaction.rconst_name), 
             rconst_values.append(reaction.rconst_value)
 
-            b, a = np.zeros(len(species)), np.zeros(len(species))
-
-            #split chemical equation into products and substrates
-            _substrates, _products = reaction.reaction_string.split('->')
-            _substrates, _products = [re.sub(re.compile(r'\s+'), '', sub).split('*') for sub in _substrates.split('+')], [re.sub(re.compile(r'\s+'), '', prod).split('*') for prod in _products.split('+')]
-            for _substrate in _substrates:
-                #get substrate stoichiometries and names
-                substrate = _substrate[1] if len(_substrate) == 2 else _substrate[0]
-                stoichiometry_coeff = int(_substrate[0]) if len(_substrate) == 2 else 1
-                a[species.index(substrate)] = stoichiometry_coeff
-            for _product in _products:
-                #get product stoichiometries and names
-                if _product == ['0']:
-                    continue
-                product = _product[1] if len(_product) == 2 else _product[0]
-                stoichiometry_coeff = int(_product[0]) if len(_product) == 2 else 1
-                b[species.index(product)] = stoichiometry_coeff
+            a, b = np.zeros(len(self.species)), np.zeros(len(self.species))
+            a, b = KineticModel._parse_reaction_string(reaction.reaction_string, a, b, self.species)
             A.append(a)
             N.append(b-a)
         
-        A, N, K = np.vstack(A), np.vstack(N), np.diag(np.array(rconst_values))
+        MM_rconst_names, MM_rconst_values = [], []
+        for reaction in self.MM_reactions:
+            MM_rconst_names.append(reaction.Km_name), MM_rconst_names.append(reaction.kcat_name)
+            MM_rconst_values.append(reaction.Km_value), MM_rconst_values.append(reaction.kcat_value)
 
-        return A, N, K, species, rconst_names, rconst_values
+            for elementary_reaction_string in reaction.split():
+                a, b = np.zeros(len(self.species)), np.zeros(len(self.species))
+                a, b = KineticModel._parse_reaction_string(elementary_reaction_string, a, b, self.species)
+                A.append(a)
+                N.append(b-a)
+
+        A, N = np.vstack(A), np.vstack(N)
+        return A, N, rconst_names, rconst_values, MM_rconst_names, MM_rconst_values
 
     def set_initial_concentration(self, specie_name: str, initial_concentration: float):
         self.update_dictionary[specie_name](initial_concentration)
@@ -204,7 +263,8 @@ class KineticModel:
         def update(new_value):
             if token == 'rate_constant':
                 self.rconst_values[index] = new_value
-                self.K[index, index] = new_value
+            elif token =='MM_rate_constant':
+                self.MM_rconst_values[index] = new_value
             elif token == 'initial_concentration':
                 self.specie_initial_concs[index] = new_value
         return update
@@ -219,7 +279,12 @@ class KineticModel:
         if len(self.reactions) > 0:
             for rate_index, rate_name in enumerate(self.rconst_names):
                 rconst_update[rate_name] = self._make_update_function(rate_index, 'rate_constant')
-        for index, specie in enumerate(self.specie_names):
+
+        if len(self.MM_reactions) > 0:
+            for rate_index, rate_name in enumerate(self.MM_rconst_names):
+                rconst_update[rate_name] = self._make_update_function(rate_index, 'MM_rate_constant')
+
+        for index, specie in enumerate(self.species):
             specie_initial_conc_update[specie] = self._make_update_function(index, 'initial_concentration')
         return {**rconst_update, **specie_initial_conc_update}
 
@@ -228,6 +293,22 @@ class KineticModel:
             return np.dot(self.N.T, np.dot(self.K, np.prod(np.power(concentrations, self.A), axis=1)))
         return ODEs
 
+    def _define_K(self):
+
+        rconsts = copy.deepcopy(self.rconst_values)
+
+        # find microscopic rate constants consistent with MM model
+        if len(self.MM_rconst_names) > 0:
+            Km_values = np.array(self.MM_rconst_values[0 :: 2])
+            kcat_values = np.array(self.MM_rconst_values[1 :: 2])
+            kon_values = np.array([self.kon] * len(Km_values))
+            koff_values = np.subtract(np.multiply(Km_values, kon_values), kcat_values)
+            MM_rconsts = np.zeros(len(self.MM_reactions) * 3)
+            MM_rconsts[0::3], MM_rconsts[1::3], MM_rconsts[2::3] = kon_values, koff_values, kcat_values
+            rconsts += MM_rconsts.tolist()
+
+        return np.diag(rconsts)
+            
     def simulate(
             self, 
             inplace = True, 
@@ -239,17 +320,15 @@ class KineticModel:
         Method for numerical integration of ODE system associated 
         with the reaction network. Outputs nothing, but re-defines 
         the concentrations attribute.
-
-        :param rtol, atol: hyperparameters that control the error tolerance
-        of the numerical integrator.
         """
 
+        self.K = self._define_K()
         simulated_data = odeint(self.ODEs, self.specie_initial_concs, self.time, rtol=self.rtol, atol=self.atol).T
         noise_arr = np.random.normal(noise_mu, noise_sigma, simulated_data.shape)
         simulated_data += noise_arr
 
         if len(observable_species) > 0:
-            observable_indices = [self.specie_names.index(specie) for specie in observable_species]
+            observable_indices = [self.species.index(specie) for specie in observable_species]
             simulated_data = simulated_data[observable_indices]
 
         if inplace:
@@ -274,9 +353,10 @@ class KineticFitter:
         self.objective = None
 
         # obtain initial guesses and constraints from kinetic model
-        self.rconst_names = self.kinetic_model.reaction_collection.rconst_names
-        self.rconst_p0 = self.kinetic_model.reaction_collection.rconst_values
-        self.rconst_bounds = [(lb, ub) for lb, ub in zip(self.kinetic_model.reaction_collection.rconst_lb, self.kinetic_model.reaction_collection.rconst_ub)]
+        self.rconst_names = self.kinetic_model.rconst_names + self.kinetic_model.MM_rconst_names
+        self.rconst_p0 = self.kinetic_model.rconst_values + self.kinetic_model.MM_rconst_values
+        self.rconst_lb = np.zeros(len(self.rconst_p0))
+        self.rconst_ub = np.full(len(self.rconst_p0), np.inf)
         self.rconst_fits = None
         self.fit_result = None
 
@@ -285,8 +365,13 @@ class KineticFitter:
         Method for adding simulated or experimental data.
         """
 
-        observable_indices = [self.kinetic_model.specie_collection.names.index(specie) for specie in observable_species]
+        observable_indices = [self.kinetic_model.species.index(specie) for specie in observable_species]
         self.dataset.append((conditions, data, observable_indices))  
+
+    def set_bounds(self, rconst_name: str, lb: float, ub: float):
+        index = self.rconst_names.index(rconst_name)
+        self.rconst_lb[index] = lb
+        self.rconst_ub[index] = ub
 
     def fit_model(self):
         """ 
@@ -307,7 +392,7 @@ class KineticFitter:
                 conditions, data, observable_indices = item
 
                 # update kinetic model with initial concentrations
-                for specie in self.kinetic_model.specie_collection.names:
+                for specie in self.kinetic_model.species:
                     self.kinetic_model.update_dictionary[specie] = 0 if specie not in conditions.keys() else conditions[specie]
 
                 simulated_data = self.kinetic_model.simulate(inplace=False)[observable_indices]
@@ -317,7 +402,7 @@ class KineticFitter:
         
         self.objective = objective
         
-        fit_result = minimize(objective, self.rconst_p0, bounds=self.rconst_bounds)
+        fit_result = minimize(objective, self.rconst_p0, bounds=[(lb, ub) for lb, ub in zip(self.rconst_lb, self.rconst_ub)])
         self.fit_result = fit_result
         self.rconst_fits = fit_result.x
 
