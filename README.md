@@ -4,13 +4,12 @@ This notebook allows you to simulate the kinetics of a chemical reaction network
 
 ## Before You Begin
 
-Ensure you have both [anaconda](https://docs.conda.io/projects/conda/en/latest/index.html) and [git](https://git-scm.com/downloads) installed. Anaconda will allow you to install the requisite python software libraires that are needed to run the code. Git will allow you to easily access newer versions of the code as they come out.
+Ensure you have [git](https://git-scm.com/downloads) installed. A package manager (like [anaconda](https://docs.conda.io/projects/conda/en/latest/index.html)) is highly recommended. Within your virtual environment, you will need to install `python==3.9.12`. I've experienced issues with installation if this step is not done beforehand.
 
-## Setup
+## Installation
 
-Before utilizing this, you will need to first create a virtual environment for this notebook. To do this, navigate to the directory containing this notebook and run the following command in your terminal:
+After you clone the repo to your local device, run `pip install -e .` to install the library and its dependencies.
 
-<code>conda env create -f environment.yml</code>
 
 ## Theory
 
