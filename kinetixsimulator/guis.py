@@ -29,7 +29,7 @@ class ProgressCurveGUI:
         # integrate reaction network and get data
         kinetic_model.simulate()
         data = []
-        for specie, concentration in zip(kinetic_model.specie_names, kinetic_model.simulated_data):
+        for specie, concentration in zip(kinetic_model.species, kinetic_model.simulated_data):
             data.append(dict(
                 type='scatter',
                 x=kinetic_model.time,
@@ -76,24 +76,85 @@ class ProgressCurveGUI:
 
         # set default slider params
         n_steps_def = 1000
-        specie_lb_def, specie_ub_def = 0, 1e3
-        rconst_lb_def, rconst_ub_def = 1e-8, 1e8
-
         slider_list, log_slider_list = [], []
-        for name in kinetic_model.specie_names + kinetic_model.rconst_names:
 
-            # get slider data
-            if name in kinetic_model.specie_names:
-                index = kinetic_model.specie_names.index(name)
-                value = kinetic_model.specie_initial_concs[index]
-                lb = specie_lb_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][0]
-                ub = specie_ub_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][1]
-            else:
-                index = kinetic_model.rconst_names.index(name)
-                value = kinetic_model.rconst_values[index]
-                lb = rconst_lb_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][0]
-                ub = rconst_ub_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][1]
-            
+        specie_lb_def, specie_ub_def = 0, 1e3
+        for name in kinetic_model.species:
+            index = kinetic_model.species.index(name)
+            value = kinetic_model.specie_initial_concs[index]
+            lb = specie_lb_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][0]
+            ub = specie_ub_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][1]
+
+            stepsize = (ub - lb) / (n_steps_def - 1)
+            log_lb = -10 if lb == 0 else np.log10(lb)
+            log_ub = -10 if ub == 0 else np.log10(ub)
+            log_value = 1e-10 if value == 0 else value
+            log_stepsize = (log_ub - log_lb) / (n_steps_def - 1)
+
+            # make sliders 
+            slider = widgets.FloatSlider(
+                value=value,
+                min=lb,
+                max=ub,
+                step=stepsize,
+                continuous_update=True,
+                description=name
+            )
+            slider.observe(self._generate_slider_update_function(name, kinetic_model, fig), names='value')
+            log_slider = widgets.FloatLogSlider(
+                value=log_value,
+                min=log_lb,
+                max=log_ub,
+                base=10,
+                step=log_stepsize,
+                continuous_update=True,
+                description=name
+            )
+            log_slider.observe(self._generate_slider_update_function(name, kinetic_model, fig), names='value')
+            slider_list.append(slider), log_slider_list.append(log_slider)
+
+        rconst_lb_def, rconst_ub_def = 1e-8, 1e8
+        for name in kinetic_model.rconst_names:
+            index = kinetic_model.rconst_names.index(name)
+            value = kinetic_model.rconst_values[index]
+            lb = rconst_lb_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][0]
+            ub = rconst_ub_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][1]
+
+            stepsize = (ub - lb) / (n_steps_def - 1)
+            log_lb = -10 if lb == 0 else np.log10(lb)
+            log_ub = -10 if ub == 0 else np.log10(ub)
+            log_value = 1e-10 if value == 0 else value
+            log_stepsize = (log_ub - log_lb) / (n_steps_def - 1)
+
+            # make sliders 
+            slider = widgets.FloatSlider(
+                value=value,
+                min=lb,
+                max=ub,
+                step=stepsize,
+                continuous_update=True,
+                description=name
+            )
+            slider.observe(self._generate_slider_update_function(name, kinetic_model, fig), names='value')
+            log_slider = widgets.FloatLogSlider(
+                value=log_value,
+                min=log_lb,
+                max=log_ub,
+                base=10,
+                step=log_stepsize,
+                continuous_update=True,
+                description=name
+            )
+            log_slider.observe(self._generate_slider_update_function(name, kinetic_model, fig), names='value')
+            slider_list.append(slider), log_slider_list.append(log_slider)
+
+        MM_lb_def, MM_ub_def = 1e-6, 1e6
+        for name in kinetic_model.MM_rconst_names:
+            index = kinetic_model.MM_rconst_names.index(name)
+            value = kinetic_model.MM_rconst_values[index]
+            lb = MM_lb_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][0]
+            ub = MM_ub_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][1]
+
             stepsize = (ub - lb) / (n_steps_def - 1)
             log_lb = -10 if lb == 0 else np.log10(lb)
             log_ub = -10 if ub == 0 else np.log10(ub)
