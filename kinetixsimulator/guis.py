@@ -5,10 +5,13 @@ This file contains classes for graphical user interfaces.
 """
 
 #imports 
+from math import ceil
+import numpy as np
 import threading
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from ipywidgets import VBox, HBox, widgets
+from .chemicalkinetics import KineticModel
 
 class ProgressCurveGUI:
     def __init__(
@@ -72,7 +75,7 @@ class ProgressCurveGUI:
 
         return slider_update
 
-    def _init_sliders(self, kinetic_model: KineticModel, fig, custom_slider_ranges: dict):
+    def _init_sliders(self, kinetic_model: KineticModel, fig, slider_config: dict):
 
         # set default slider params
         n_steps_def = 1000
@@ -80,10 +83,14 @@ class ProgressCurveGUI:
 
         specie_lb_def, specie_ub_def = 0, 1e3
         for name in kinetic_model.species:
+
+            if name in slider_config.keys() and not slider_config[name]:
+                continue
+
             index = kinetic_model.species.index(name)
             value = kinetic_model.specie_initial_concs[index]
-            lb = specie_lb_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][0]
-            ub = specie_ub_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][1]
+            lb = specie_lb_def if name not in slider_config.keys() else slider_config[name][0]
+            ub = specie_ub_def if name not in slider_config.keys() else slider_config[name][1]
 
             stepsize = (ub - lb) / (n_steps_def - 1)
             log_lb = -10 if lb == 0 else np.log10(lb)
@@ -115,10 +122,14 @@ class ProgressCurveGUI:
 
         rconst_lb_def, rconst_ub_def = 1e-8, 1e8
         for name in kinetic_model.rconst_names:
+
+            if name in slider_config.keys() and not slider_config[name]:
+                continue
+
             index = kinetic_model.rconst_names.index(name)
             value = kinetic_model.rconst_values[index]
-            lb = rconst_lb_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][0]
-            ub = rconst_ub_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][1]
+            lb = rconst_lb_def if name not in slider_config.keys() else slider_config[name][0]
+            ub = rconst_ub_def if name not in slider_config.keys() else slider_config[name][1]
 
             stepsize = (ub - lb) / (n_steps_def - 1)
             log_lb = -10 if lb == 0 else np.log10(lb)
@@ -150,10 +161,14 @@ class ProgressCurveGUI:
 
         MM_lb_def, MM_ub_def = 1e-6, 1e6
         for name in kinetic_model.MM_rconst_names:
+
+            if name in slider_config.keys() and not slider_config[name]:
+                continue
+
             index = kinetic_model.MM_rconst_names.index(name)
             value = kinetic_model.MM_rconst_values[index]
-            lb = MM_lb_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][0]
-            ub = MM_ub_def if name not in custom_slider_ranges.keys() else custom_slider_ranges[name][1]
+            lb = MM_lb_def if name not in slider_config.keys() else slider_config[name][0]
+            ub = MM_ub_def if name not in slider_config.keys() else slider_config[name][1]
 
             stepsize = (ub - lb) / (n_steps_def - 1)
             log_lb = -10 if lb == 0 else np.log10(lb)
@@ -185,16 +200,22 @@ class ProgressCurveGUI:
 
         return slider_list, log_slider_list
     
-    def _init_toggle_buttons(self, sliders: list, log_sliders: list):
-        slider_containers = []
-        slider_dict = {}  # Dictionary to keep track of active sliders for each pair
+    def _init_toggle_buttons(self, sliders: list, log_sliders: list, n_slider_cols: int):
         
+        hbox_container = dict([i, []] for i in range(1, n_slider_cols + 1))
+        no_sliders_per_container = ceil(len(sliders) / n_slider_cols)
+        slider_dict = {}  # Dictionary to keep track of active sliders for each pair
+
+        incrementor = 0
+        current_vbox_container = 1
         for slider, log_slider in zip(sliders, log_sliders):
             # Initialize the active slider as the linear slider
             slider_dict[slider.description] = slider
             
             toggle_button = widgets.Button(description='Linear Scale')
-            
+            toggle_button.layout.width = '100px'  # Adjust the width as needed
+            toggle_button.layout.height = '25px'   # Adjust the height as needed
+
             # Function to toggle between linear and log sliders
             def toggle_scale(change, slider, log_slider, toggle_button, slider_container):
                 current_description = toggle_button.description
@@ -210,15 +231,21 @@ class ProgressCurveGUI:
                 slider_container.children = [toggle_button, slider_dict[slider.description]]
 
             slider_container = HBox([toggle_button, slider_dict[slider.description]])
-            slider_containers.append(slider_container)
             toggle_button.on_click(lambda change, s=slider, ls=log_slider, tb=toggle_button, slider_container=slider_container: toggle_scale(change, s, ls, tb, slider_container))
-    
-        return VBox(slider_containers)
+            
+            if incrementor == no_sliders_per_container:
+                incrementor = 0
+                current_vbox_container += 1
 
-    def launch(self, kinetic_model: KineticModel, custom_slider_ranges: dict = {}):
+            hbox_container[current_vbox_container].append(slider_container)
+            incrementor += 1
+
+        return HBox([VBox(i) for i in hbox_container.values()])
+
+    def launch(self, kinetic_model: KineticModel, slider_config: dict = {}, n_slider_cols: int = 3):
         fig = self._init_figure(kinetic_model)
-        sliders, log_sliders = self._init_sliders(kinetic_model, fig, custom_slider_ranges)
-        slider_containers = self._init_toggle_buttons(sliders, log_sliders)
+        sliders, log_sliders = self._init_sliders(kinetic_model, fig, slider_config)
+        slider_containers = self._init_toggle_buttons(sliders, log_sliders, n_slider_cols)
         return VBox([fig] + [slider_containers])
 
 class BindingIsothermGUI(ProgressCurveGUI):

@@ -19,6 +19,8 @@ overs JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, And
 .idea/**/contentModel.xml
 
 test.ipynb
+kinetixsimulator.egg-info/
+build/
 
 # Sensitive or high-churn files
 .idea/**/dataSources/
