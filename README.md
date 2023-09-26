@@ -1,4 +1,4 @@
-# Kinetics Simulator
+# kinetixsimulator
 
 This notebook allows you to simulate the kinetics of a chemical reaction network.
 
