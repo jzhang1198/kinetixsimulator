@@ -1,6 +1,6 @@
 # kinetixsimulator
 
-This notebook allows you to simulate the kinetics of a chemical reaction network.
+A Python package for simulating chemical reaction kinetics and global fitting of kinetic data. 
 
 ## Before You Begin
 
