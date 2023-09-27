@@ -71,7 +71,7 @@ class ReversibleReaction:
     ):
         
         assert isinstance(reaction_string, str), 'ReversibleReaction Error: reaction_string must be a string.'
-        assert '<->' in reaction_string and '->' not in reaction_string, 'ReversibleReaction Error: Substrates and products within reaction_string must be separated by a "<->" character.'
+        assert '<->' in reaction_string, 'ReversibleReaction Error: Substrates and products within reaction_string must be separated by a "<->" character.'
         assert isinstance(rconst_names, list) and set([True]) == set([isinstance(name, str) for name in rconst_names]), 'ReversibleReaction Error: rconst_names must be a list of strings.'
         assert isinstance(rconst_values, list) and set([True]) == set([isinstance(value, numbers.Number) for value in rconst_values]), 'ReversibleReaction Error: rconst_values must be a list of numerics.'
         assert len(rconst_values) == len(rconst_names), 'ReversibleReaction Error: rconst_names and rconst_values must be the same length.'
@@ -461,9 +461,8 @@ class KineticFitter:
 
 class BindingReaction(KineticModel):
     """
-    Deprecation warning: DeprecatedClass is no longer maintained and will be removed.
+    Deprecated!
     """
-
     def __init__(self, initial_concentrations: dict, reaction_dict: dict, limiting_species: str, ligand: str, equilibtration_time: int, concentration_units='µM', time_units='s', ligand_concentrations=np.insert(np.logspace(-3,2,10), 0, 0)):
         self.equilibration_time = equilibtration_time
         time = np.linspace(0, self.equilibration_time, self.equilibration_time)
