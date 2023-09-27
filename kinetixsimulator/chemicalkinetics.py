@@ -7,14 +7,15 @@ This file contains classes for modelling the kinetics of chemical reaction netwo
 #imports
 import re
 import copy
+import numbers
 import numpy as np
-from scipy.integrate import odeint
 from typing import Union, List
+from scipy.integrate import odeint
 from scipy.optimize import curve_fit, minimize
 
 class Reaction:
     """ 
-    Utility class for organizing data for unidirectional reactions.
+    Container class for organizing data for unidirectional reactions.
     """
 
     def __init__(
@@ -39,11 +40,15 @@ class Reaction:
         """ 
         Static method for ensuring input arguments satisfy code assumptions.
         """
-        pass
 
-class BidirectionalReaction:
+        assert isinstance(reaction_string, str), 'Reaction Error: reaction_string must be a string.'
+        assert '->' in reaction_string and '<->' not in reaction_string, 'Reaction Error: Substrates and products within reaction_string must be separated by a "->" character.'
+        assert isinstance(rconst_name, str), 'Reaction Error: rconst_name must be a string.'
+        assert isinstance(rconst_value, numbers.Number) and rconst_value > 0, 'Reaction Error: rconst_value must be a positive numeric.' 
+
+class ReversibleReaction:
     """ 
-    Utility class for organizing data for bidirectional reactions.
+    Container class for organizing data for reversible reactions.
     """
 
     def __init__(
@@ -53,7 +58,7 @@ class BidirectionalReaction:
             rconst_values: list,
         ):
         
-        BidirectionalReaction._parse_inputs(reaction_string, rconst_names, rconst_values)
+        ReversibleReaction._parse_inputs(reaction_string, rconst_names, rconst_values)
         self.reaction_string = reaction_string
         self.rconst_names = rconst_names
         self.rconst_values = rconst_values
@@ -64,11 +69,16 @@ class BidirectionalReaction:
         rconst_names,
         rconst_values,
     ):
-        pass
+        
+        assert isinstance(reaction_string, str), 'ReversibleReaction Error: reaction_string must be a string.'
+        assert '<->' in reaction_string and '->' not in reaction_string, 'ReversibleReaction Error: Substrates and products within reaction_string must be separated by a "<->" character.'
+        assert isinstance(rconst_names, list) and set([True]) == set([isinstance(name, str) for name in rconst_names]), 'ReversibleReaction Error: rconst_names must be a list of strings.'
+        assert isinstance(rconst_values, list) and set([True]) == set([isinstance(value, numbers.Number) for value in rconst_values]), 'ReversibleReaction Error: rconst_values must be a list of numerics.'
+        assert len(rconst_values) == len(rconst_names), 'ReversibleReaction Error: rconst_names and rconst_values must be the same length.'
     
     def split(self):
         """ 
-        Method that splits the bidirectional reaction into two unimolecular
+        Method that splits the reversible reaction into two unimolecular
         reactions.
         """
 
@@ -86,7 +96,7 @@ class BidirectionalReaction:
 
 class MMReaction:
     """ 
-    Utility class for storing data for reactions modeled with 
+    Container class for storing data for reactions modeled with 
     Michaelis-Menten kinetics.
     """
 
@@ -104,6 +114,22 @@ class MMReaction:
         self.Km_value = Km_value
         self.kcat_name = kcat_name
         self.kcat_value = kcat_value
+
+    @staticmethod
+    def _parse_inputs(
+        reaction_string,
+        Km_name,
+        Km_value,
+        kcat_name,
+        kcat_value
+    ):
+        
+        assert isinstance(reaction_string, str), 'MMReaction Error: reaction_string must be a string.'
+        assert '<->' in reaction_string and '->' in reaction_string, 'MMReaction Error: Substrates and products for the binding and catalysis steps must be separated with "<->" and "->" characters, respectively.'
+        assert isinstance(Km_name, str), 'MMReaction Error: Km_name must be a string.'
+        assert isinstance(Km_value, numbers.Number) and Km_value > 0, 'MMReaction Error: Km_value must be a positive numeric.' 
+        assert isinstance(kcat_name, str), 'MMReaction Error: kcat_name must be a string.'
+        assert isinstance(kcat_value, numbers.Number) and kcat_value > 0, 'MMReaction Error: kcat_value must be a positive numeric.' 
 
     def split(self):
 
@@ -126,7 +152,7 @@ class KineticModel:
     def __init__(
             self, 
             time: np.ndarray,
-            reactions: List[Union[Reaction, BidirectionalReaction]],
+            reactions: List[Union[Reaction, ReversibleReaction]],
             integrator_atol: float = 1.5e-8,
             integrator_rtol: float = 1.5e-8,
             concentration_units='uM', 
@@ -135,7 +161,7 @@ class KineticModel:
         
         # segregate reactions
         unimolecular_reactions = [reaction for reaction in reactions if isinstance(reaction, Reaction)]
-        unimolecular_reactions += np.array([reaction.split() for reaction in reactions if isinstance(reaction, BidirectionalReaction)]).flatten().tolist()
+        unimolecular_reactions += np.array([reaction.split() for reaction in reactions if isinstance(reaction, ReversibleReaction)]).flatten().tolist()
         MM_reactions = [reaction for reaction in reactions if isinstance(reaction, MMReaction)]
         self.reactions = unimolecular_reactions
         self.MM_reactions = MM_reactions
@@ -145,15 +171,15 @@ class KineticModel:
         self.time_units = time_units
 
         # define specie attributes
-        self.species = self._define_species()
+        self.species = self._get_species()
         self.specie_initial_concs = [0] * len(self.species)
         self.concentration_units = concentration_units
 
         # define diffusion-limited rate consistent with provided units
-        self.kon = self._define_kon()
+        self.kon = self._set_kon()
 
         # define reaction attributes
-        self.A, self.N, self.rconst_names, self.rconst_values, self.MM_rconst_names, self.MM_rconst_values = self._define_rconsts_and_stoichiometries()
+        self.A, self.N, self.rconst_names, self.rconst_values, self.MM_rconst_names, self.MM_rconst_values = self._get_rconsts_and_stoichiometries()
         self.K = None
 
         # define attributes acessed by the integrator
@@ -167,11 +193,14 @@ class KineticModel:
         # dynamic attribute to hold simulated data
         self.simulated_data = None 
 
-    def _define_kon(self):
+    def _set_kon(self):
+        """ 
+        Method to set 
+        """
 
-        def_kon = 1e8
+        def_kon = 1e2
 
-        to_uM = {
+        conc_unit_mapper = {
             "M": 1e6,
             "mM": 1e3,
             "uM": 1,
@@ -180,7 +209,7 @@ class KineticModel:
             "fM": 1e-9
         }
 
-        to_s = {
+        time_unit_mapper = {
             "day": 86400,
             'hour': 3600,
             'minute': 60,
@@ -192,13 +221,13 @@ class KineticModel:
             'fs': 1e-3,
         }
 
-        uM_conversion = to_uM[self.concentration_units]
-        s_conversion = to_s[self.time_units]
+        uM_conversion = conc_unit_mapper[self.concentration_units]
+        s_conversion = time_unit_mapper[self.time_units]
 
         kon = def_kon * uM_conversion * s_conversion
         return kon
 
-    def _define_species(self):
+    def _get_species(self):
         characters = {'*', '->', '+', '<->'}
         species = list(set([specie for specie in sum([i.reaction_string.split(' ') for i in self.reactions + self.MM_reactions], []) if specie not in characters and not specie.isnumeric()]))
         return species
@@ -225,13 +254,12 @@ class KineticModel:
 
         return a, b
 
-    def _define_rconsts_and_stoichiometries(self):
+    def _get_rconsts_and_stoichiometries(self):
 
         A, N, rconst_names, rconst_values  = [], [], [], []
         for reaction in self.reactions:
             rconst_names.append(reaction.rconst_name), 
             rconst_values.append(reaction.rconst_value)
-
             a, b = np.zeros(len(self.species)), np.zeros(len(self.species))
             a, b = KineticModel._parse_reaction_string(reaction.reaction_string, a, b, self.species)
             A.append(a)
@@ -242,9 +270,14 @@ class KineticModel:
             MM_rconst_names.append(reaction.Km_name), MM_rconst_names.append(reaction.kcat_name)
             MM_rconst_values.append(reaction.Km_value), MM_rconst_values.append(reaction.kcat_value)
 
-            for elementary_reaction_string in reaction.split():
+            for index, elementary_reaction_string in enumerate(reaction.split()):
                 a, b = np.zeros(len(self.species)), np.zeros(len(self.species))
                 a, b = KineticModel._parse_reaction_string(elementary_reaction_string, a, b, self.species)
+
+                # check to make sure MM reaction is single substrate
+                if index == 0:
+                    assert a.sum() == 2 and b.sum() == 1, 'MMReaction Error: Reaction must follow a single substrate Michaelis-Menten mechanism.'
+
                 A.append(a)
                 N.append(b-a)
 
@@ -252,6 +285,12 @@ class KineticModel:
         return A, N, rconst_names, rconst_values, MM_rconst_names, MM_rconst_values
 
     def set_initial_concentration(self, specie_name: str, initial_concentration: float):
+        """ 
+        Method for setting the initial concentration of a chemical specie.
+        """
+
+        assert isinstance(specie_name, str) and isinstance(initial_concentration, numbers.Number), 'KineticModel Error: specie_name and initial_concentration arguments must be a string or numeric, respectively.'
+        assert specie_name in self.species, f'KineticModel Error: cannot set the initial concentration of {specie_name}.'
         self.update_dictionary[specie_name](initial_concentration)
 
     def _make_update_function(self, index: int, token: str):
@@ -293,7 +332,7 @@ class KineticModel:
             return np.dot(self.N.T, np.dot(self.K, np.prod(np.power(concentrations, self.A), axis=1)))
         return ODEs
 
-    def _define_K(self):
+    def _set_K(self):
 
         rconsts = copy.deepcopy(self.rconst_values)
 
@@ -319,10 +358,10 @@ class KineticModel:
         """ 
         Method for numerical integration of ODE system associated 
         with the reaction network. Outputs nothing, but re-defines 
-        the concentrations attribute.
+        the simulated_data attribute.
         """
 
-        self.K = self._define_K()
+        self.K = self._set_K()
         simulated_data = odeint(self.ODEs, self.specie_initial_concs, self.time, rtol=self.rtol, atol=self.atol).T
         noise_arr = np.random.normal(noise_mu, noise_sigma, simulated_data.shape)
         simulated_data += noise_arr
@@ -422,8 +461,9 @@ class KineticFitter:
 
 class BindingReaction(KineticModel):
     """
-    Child class with methods specific for modelling thermodynamics and kinetics of bimolecular binding reactions.
+    Deprecation warning: DeprecatedClass is no longer maintained and will be removed.
     """
+
     def __init__(self, initial_concentrations: dict, reaction_dict: dict, limiting_species: str, ligand: str, equilibtration_time: int, concentration_units='µM', time_units='s', ligand_concentrations=np.insert(np.logspace(-3,2,10), 0, 0)):
         self.equilibration_time = equilibtration_time
         time = np.linspace(0, self.equilibration_time, self.equilibration_time)

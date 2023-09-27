@@ -5,13 +5,13 @@ This file contains classes for graphical user interfaces.
 """
 
 #imports 
-from math import ceil
-import numpy as np
 import threading
+import numpy as np
+from math import ceil
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from ipywidgets import VBox, HBox, widgets
 from .chemicalkinetics import KineticModel
+from ipywidgets import VBox, HBox, widgets
 
 class ProgressCurveGUI:
     def __init__(
@@ -27,18 +27,24 @@ class ProgressCurveGUI:
         self.fontsize = fontsize
         self.multithread = multithread
     
-    def _init_figure(self, kinetic_model: KineticModel):
+    def _init_figure(self, kinetic_model: KineticModel, hidden_species: set):
 
         # integrate reaction network and get data
         kinetic_model.simulate()
         data = []
         for specie, concentration in zip(kinetic_model.species, kinetic_model.simulated_data):
-            data.append(dict(
+
+            data_dict = dict(
                 type='scatter',
                 x=kinetic_model.time,
                 y=concentration,
-                name=specie
-            ))
+                name=specie,
+            )
+            
+            if specie in hidden_species:
+                data_dict['visible'] = 'legendonly'
+
+            data.append(data_dict)
 
         fig = go.FigureWidget(data=data)
         fig.layout.title = self.title
@@ -242,8 +248,8 @@ class ProgressCurveGUI:
 
         return HBox([VBox(i) for i in hbox_container.values()])
 
-    def launch(self, kinetic_model: KineticModel, slider_config: dict = {}, n_slider_cols: int = 3):
-        fig = self._init_figure(kinetic_model)
+    def launch(self, kinetic_model: KineticModel, slider_config: dict = {}, hidden_species: list = [], n_slider_cols: int = 3):
+        fig = self._init_figure(kinetic_model, set(hidden_species))
         sliders, log_sliders = self._init_sliders(kinetic_model, fig, slider_config)
         slider_containers = self._init_toggle_buttons(sliders, log_sliders, n_slider_cols)
         return VBox([fig] + [slider_containers])
