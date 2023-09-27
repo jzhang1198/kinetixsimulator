@@ -21,6 +21,7 @@ overs JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, And
 test.ipynb
 kinetixsimulator.egg-info/
 build/
+examples/ligand_binding.ipynb
 
 # Sensitive or high-churn files
 .idea/**/dataSources/
