@@ -12,4 +12,4 @@ After you clone the repo to your local device, run `pip install -e .` to install
 
 ## Usage
 
-Refer to Jupyter Notebooks within `examples` for examples outlining usage of the library code for simulating reaction kinetics and global fitting of kinetic data.
+Refer to the Jupyter Notebooks within `examples` for examples outlining usage of the package code for simulating reaction kinetics and global fitting of kinetic data.
