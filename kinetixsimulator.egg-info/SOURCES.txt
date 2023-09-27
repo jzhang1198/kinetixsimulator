@@ -1,0 +1,13 @@
+LICENSE
+README.md
+setup.py
+kinetixsimulator/__init__.py
+kinetixsimulator/chemicalkinetics.py
+kinetixsimulator/globalfitter.py
+kinetixsimulator/guis.py
+kinetixsimulator/utils.py
+kinetixsimulator.egg-info/PKG-INFO
+kinetixsimulator.egg-info/SOURCES.txt
+kinetixsimulator.egg-info/dependency_links.txt
+kinetixsimulator.egg-info/requires.txt
+kinetixsimulator.egg-info/top_level.txt
