@@ -115,3 +115,7 @@ class GlobalFitter:
             chi_squared_arrays(np.array(chi_squared_arrays))
         
         self.chi_squared_data = dict([(self.fitting_params[i], (grid_search_values[i], chi_squared_arrays[i])) for i in range(len(self.fitting_params))])
+
+class GlobalFitter:
+    def __init__(self):
+        pass
