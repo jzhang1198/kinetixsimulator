@@ -293,6 +293,11 @@ class KineticModel:
         assert specie_name in self.species, f'KineticModel Error: cannot set the initial concentration of {specie_name}.'
         self.update_dictionary[specie_name](initial_concentration)
 
+    def set_rate_constant(self, rconst_name: str, value: float):
+        assert isinstance(rconst_name, str) and isinstance(value, numbers.Number), 'KineticModel Error: rconst_name and value arguments must be a string or numeric, respectively.'
+        assert rconst_name in self.species, f'KineticModel Error: cannot set the value of {rconst_name}.'
+        self.update_dictionary[rconst_name](value)
+
     def _make_update_function(self, index: int, token: str):
         """ 
         Private method for defining functions to update rate constants
