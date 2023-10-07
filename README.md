@@ -73,7 +73,7 @@ gui = ProgressCurveGUI()
 gui.launch(kinetic_model, hidden_species=['E:S'], slider_config={'E:S': None, 'P': None, 'S': (1, 100)})
 ```
 
-By default, sliders enabling control of rate constant values and specie initial concentrations will be rendered with a set range. You can prevent the display of particular sliders and override default slider ranges by passing a `slider_config` dictionary to the `launch` method. If you would like to hide traces for certain chemical species by providing a `hidden_species` list to the `launch` method. Note that interactive simulation is only supported within the Jupyter environment (i.e. you can't run this outside of a Jupyter Notebook).
+By default, sliders enabling control of rate constant values and specie initial concentrations will be rendered with a set range. You can prevent the display of particular sliders and override default slider ranges by passing a `slider_config` dictionary to the `launch` method. You can hide traces for certain chemical species by providing a `hidden_species` list to the `launch` method. Note that interactive simulation is only supported within the Jupyter environment (i.e. you can't run this outside of a Jupyter Notebook).
 
 ### Technical Notes
 
