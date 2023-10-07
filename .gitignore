@@ -17,7 +17,7 @@
 test.ipynb
 kinetixsimulator.egg-info/
 build/
-examples/ligand_binding.ipynb
+test/
 
 # Sensitive or high-churn files
 .idea/**/dataSources/
