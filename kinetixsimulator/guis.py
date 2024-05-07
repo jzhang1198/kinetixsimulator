@@ -13,6 +13,7 @@ from plotly.subplots import make_subplots
 from .chemicalkinetics import KineticModel
 from ipywidgets import VBox, HBox, widgets
 
+
 class ProgressCurveGUI:
     def __init__(
             self, 
@@ -254,6 +255,7 @@ class ProgressCurveGUI:
         slider_containers = self._init_toggle_buttons(sliders, log_sliders, n_slider_cols)
         return VBox([fig] + [slider_containers])
 
+
 class BindingIsothermGUI(ProgressCurveGUI):
     def __init__(self, chemical_reaction_network, figsize=(8,8), title='Binding Kinetics', fontsize=12, multithread=False, tol=None, sliders=[]):
         self.chemical_reaction_network = chemical_reaction_network
@@ -345,6 +347,7 @@ class BindingIsothermGUI(ProgressCurveGUI):
     
     def interactive(self):
         return super().interactive()
+
 
 class FitPlotGUI:
     def __init__(self, fitter, figsize=(8,8), title='Mass Action Kinetics', fontsize=12):

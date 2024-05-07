@@ -46,6 +46,7 @@ class Reaction:
         assert isinstance(rconst_name, str), 'Reaction Error: rconst_name must be a string.'
         assert isinstance(rconst_value, numbers.Number) and rconst_value > 0, 'Reaction Error: rconst_value must be a positive numeric.' 
 
+
 class ReversibleReaction:
     """ 
     Container class for organizing data for reversible reactions.
@@ -93,6 +94,7 @@ class ReversibleReaction:
         ]
 
         return reactions
+
 
 class MMReaction:
     """ 
@@ -144,6 +146,7 @@ class MMReaction:
 
         return [forward, reverse, chemical_reaction_string]
         
+
 class KineticModel:
     """
     Class for an arbitrary network of chemical reactions.
@@ -379,6 +382,7 @@ class KineticModel:
             self.simulated_data = simulated_data
         else:
             return simulated_data
+
 
 class KineticFitter:
     """ 
